@@ -1,0 +1,14 @@
+Inspecting Routes:
+{'GET', 'HEAD'} /api/v1/openapi.json
+{'GET', 'HEAD'} /api/v1/docs
+{'GET', 'HEAD'} /docs/oauth2-redirect
+{'GET', 'HEAD'} /redoc
+{'GET'} /health
+{'POST'} /api/v1/public/reports/create
+{'POST'} /api/v1/public/reports/message
+{'GET'} /api/v1/public/evidence/{evidence_id}/download
+{'POST'} /api/v1/admin/auth/login
+{'GET'} /api/v1/admin/reports/
+{'GET'} /api/v1/admin/reports/{report_id}
+{'PUT'} /api/v1/admin/reports/{report_id}/status
+{'GET'} /api/v1/admin/evidence/{evidence_id}/download

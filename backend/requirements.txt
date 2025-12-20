@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+pydantic[email]
+pydantic-settings
+sqlalchemy
+asyncpg
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+structlog
+alembic
+httpx
+opencv-python-headless
+Pillow
+python-magic
+pandas
+numpy

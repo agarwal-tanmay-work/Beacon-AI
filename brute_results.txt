@@ -1,0 +1,5 @@
+QUOTA: v1/gemini-2.5-flash
+QUOTA: v1/gemini-2.0-flash
+QUOTA: v1beta/gemini-2.5-flash
+QUOTA: v1beta/gemini-2.0-flash
+QUOTA: v1beta/gemini-2.0-flash-exp
