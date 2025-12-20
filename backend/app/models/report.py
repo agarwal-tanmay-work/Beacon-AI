@@ -43,6 +43,13 @@ class Report(Base):
     categories = Column(JSON, default=list)
     location_meta = Column(JSON, nullable=True)
     
+    # New Credibility Analysis Fields
+    incident_summary = Column(Text, nullable=True)
+    evidence_analysis = Column(JSON, nullable=True)
+    tone_analysis = Column(JSON, nullable=True)
+    consistency_score = Column(Integer, nullable=True)
+    fabrication_risk_score = Column(Integer, nullable=True)
+    
     is_archived = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

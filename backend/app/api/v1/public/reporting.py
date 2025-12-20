@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.schemas.report import CreateReportRequest, ReportResponse, MessageRequest, MessageResponse
@@ -15,31 +15,37 @@ async def create_report(request: CreateReportRequest, db: AsyncSession = Depends
     Start a new anonymous reporting session.
     Generates a secure access token for the user.
     """
-    # Use client_seed for entropy mixing or just log it (Prototype: Log)
-    # print(f"Init Report with Seed: {request.client_seed}")
+    import traceback
+    try:
+        # Use client_seed for entropy mixing or just log it (Prototype: Log)
+        # print(f"Init Report with Seed: {request.client_seed}")
 
-    # Generate secure token
-    raw_token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-    
-    # Create Report
-    new_report = Report(
-        access_token_hash=token_hash
-    )
-    db.add(new_report)
-    await db.flush() # Get ID
-    
-    # Initialize Engine State
-    await ReportEngine.initialize_report(new_report.id, db)
-    
-    return ReportResponse(
-        report_id=new_report.id,
-        access_token=raw_token,
-        message="Secure session established. Use this token for all future messages."
-    )
+        # Generate secure token
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        
+        # Create Report
+        new_report = Report(
+            access_token_hash=token_hash
+        )
+        db.add(new_report)
+        await db.flush() # Get ID
+        
+        # Initialize Engine State
+        await ReportEngine.initialize_report(new_report.id, db)
+        
+        return ReportResponse(
+            report_id=new_report.id,
+            access_token=raw_token,
+            message="Secure session established. Use this token for all future messages."
+        )
+    except Exception as e:
+        print(f"[CREATE_REPORT ERROR] {type(e).__name__}: {e}")
+        traceback.print_exc()
+        raise
 
 @router.post("/message", response_model=MessageResponse)
-async def send_message(request: MessageRequest, db: AsyncSession = Depends(get_db)):
+async def send_message(request: MessageRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """
     Send a message to the reporting bot.
     Validated via Access Token.
@@ -74,4 +80,4 @@ async def send_message(request: MessageRequest, db: AsyncSession = Depends(get_d
         raise HTTPException(status_code=400, detail="This report is closed.")
 
     # Process Message
-    return await ReportEngine.process_message(request.report_id, request.content, db)
+    return await ReportEngine.process_message(request.report_id, request.content, db, background_tasks)

@@ -36,15 +36,14 @@ app = FastAPI(
 )
 
 # Middleware: CORS
-# Strict enforcement of allowed origins
-if settings.CORS_ORIGINS:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[str(origin) for origin in settings.CORS_ORIGINS],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+# HARDCODED FOR DEVELOPMENT - GUARANTEED TO WORK
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,  # MUST be False when using wildcard origins
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Exception Handlers
 app.add_exception_handler(Exception, global_exception_handler)

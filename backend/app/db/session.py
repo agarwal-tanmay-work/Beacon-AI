@@ -1,13 +1,19 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.pool import NullPool
 from app.core.config import settings
 
 # Create Async Engine
+# For Supabase/PostgreSQL with asyncpg, SSL is specified in the URL, not connect_args
+db_url = settings.DATABASE_URL
+if "supabase" in db_url and "ssl=" not in db_url:
+    # Add SSL requirement to URL for asyncpg
+    db_url = db_url + ("&" if "?" in db_url else "?") + "ssl=require"
+
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    db_url,
     echo=settings.ENVIRONMENT == "development",
     future=True,
-    # SSL Fix for Production DBs (Supabase etc)
-    # connect_args={"ssl": "require"}, # asyncpg might need this or just in URL
+    poolclass=NullPool,  # Fixes asyncpg concurrency/connection issues
 )
 
 # Create Session Factory

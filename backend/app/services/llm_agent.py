@@ -15,8 +15,9 @@ SYSTEM_PROMPT = """You are Beacon AI, a warm and compassionate assistant helping
 - Keep responses concise (2-3 sentences max)
 
 ⚡ CRITICAL RULES:
-1. When user provides information, ACKNOWLEDGE IT and MOVE TO THE NEXT QUESTION. Never re-ask.
-2. When you need more details, ask POLITELY without saying their answer is "vague" or "unclear". 
+1. When user provides information, ACKNOWLEDGE IT and MOVE TO THE NEXT QUESTION.
+2. If the user refuses to answer or gives a vague answer, MAINTAIN YOUR WARM PERSONA, but explain why the detail is helpful and ASK AGAIN. Do not skip important details (What, Where, When).
+3. When you need more details, ask POLITELY without saying their answer is "vague" or "unclear". 
    
    INSTEAD OF: "That's vague, please be specific"
    SAY: "Could you help me with a few more details? What's the exact name of the place?"
@@ -56,7 +57,7 @@ class LLMAgent:
     """Groq-powered LLM Agent."""
     
     GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-    GROQ_MODEL = "llama-3.3-70b-versatile"
+    GROQ_MODEL = "llama-3.1-8b-instant"
     
     @staticmethod
     def generate_case_id() -> str:
@@ -79,7 +80,7 @@ class LLMAgent:
         payload = {
             "model": LLMAgent.GROQ_MODEL,
             "messages": messages,
-            "temperature": 0.7,
+            "temperature": 0.5, # Slightly lower temp for more consistent adherence to rules
             "max_tokens": 512
         }
         
@@ -107,6 +108,12 @@ class LLMAgent:
                         final_report["case_id"] = case_id
                         # Replace placeholder with actual case ID
                         clean_response = clean_response.replace("CASE_ID_PLACEHOLDER", case_id)
+                        # Also catch CASE_PLACEHOLDER (user reported issue)
+                        clean_response = clean_response.replace("CASE_PLACEHOLDER", case_id)
+                        
+                        # Replace any LLM-generated case IDs (Case123456, CASE-XXX, etc.) with our BCN format
+                        clean_response = re.sub(r'\b[Cc]ase[-_]?\d{4,10}\b', case_id, clean_response)
+                        clean_response = re.sub(r'\bCASE[-_]?ID[-_]?\d{4,10}\b', case_id, clean_response, flags=re.IGNORECASE)
                         # Remove any duplicate case ID mentions
                         clean_response = re.sub(r'\n\nYour Case ID:.*$', '', clean_response)
                     

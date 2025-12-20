@@ -124,7 +124,7 @@ export function ChatInterface() {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-hide bg-gradient-to-b from-transparent to-black/20">
-                <AnimatePresence mode="popLayout">
+                <AnimatePresence mode="sync">
                     {messages.map((msg) => (
                         <motion.div
                             key={msg.id}
@@ -151,7 +151,7 @@ export function ChatInterface() {
                                 </div>
                                 <div className="mt-2 text-[10px] opacity-30 flex justify-end gap-1 items-center">
                                     {msg.sender === "SYSTEM" && <ShieldCheck className="w-3 h-3" />}
-                                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    {new Date(msg.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
                                 </div>
                             </div>
                         </motion.div>
@@ -171,8 +171,8 @@ export function ChatInterface() {
                             </div>
                         </motion.div>
                     )}
-                    <div ref={bottomRef} />
                 </AnimatePresence>
+                <div ref={bottomRef} />
             </div>
 
             {/* Input Area */}

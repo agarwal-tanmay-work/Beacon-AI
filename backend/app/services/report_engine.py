@@ -30,7 +30,8 @@ class ReportEngine:
     async def process_message(
         report_id: str,
         user_message: str,
-        session: AsyncSession
+        session: AsyncSession,
+        background_tasks: "BackgroundTasks" = None
     ) -> MessageResponse:
         """
         Process a user message:
@@ -113,19 +114,26 @@ class ReportEngine:
             report.categories = [final_report.get("what", "Corruption Report")]
             report.location_meta = {
                 "where": final_report.get("where"),
-                "when": final_report.get("when")
+                "when": final_report.get("when"),
+                "who": final_report.get("who")
             }
+            report.incident_summary = final_report.get("story")
             
             # Credibility score (admin only, never shown to user)
-            score = final_report.get("credibilityScore", 50)
-            if isinstance(score, str):
-                try:
-                    score = int(score)
-                except:
-                    score = 50
-            report.credibility_score = min(100, max(0, score))
+            # Trigger Comprehensive Scoring (Background)
+            from app.services.scoring_service import ScoringService
+            if background_tasks:
+                 background_tasks.add_task(ScoringService.run_background_scoring, report.id)
+            else:
+                 # Fallback if no bg tasks provided (unlikely if wired correctly)
+                 # We log warning but don't block
+                 print("WARNING: BackgroundTasks not provided for scoring.")
         
         await session.commit()
+        
+        # Log successful storage for debugging
+        if final_report:
+            print(f"[REPORT_ENGINE] ✅ Committed report {report_id} with case_id: {final_report.get('case_id')}")
         
         return MessageResponse(
             report_id=report_id,

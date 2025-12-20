@@ -26,8 +26,17 @@ target_metadata = Base.metadata
 def get_url():
     url = settings.DATABASE_URL
     # Force sync driver for Alembic
-    if "+asyncpg" in url:
-        url = url.replace("+asyncpg", "+psycopg2") 
+    # If using postgresql+asyncpg, switching to postgresql:// (which defaults to psycopg2)
+    # or postgresql+psycopg2://
+    # Safest is to replace "postgresql+asyncpg" with "postgresql"
+    if "postgresql+asyncpg" in url:
+        url = url.replace("postgresql+asyncpg", "postgresql")
+    
+    # Force SSL in the URL itself for psycopg2
+    if "?" not in url:
+        url += "?sslmode=require"
+    
+    print(f"DEBUG: Alembic using URL: {url}")
     return url
 
 def run_migrations_offline() -> None:
@@ -37,6 +46,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        connect_args={"sslmode": "require"}
     )
 
     with context.begin_transaction():

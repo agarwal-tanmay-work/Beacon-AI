@@ -14,15 +14,18 @@ class Settings(BaseSettings):
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
-    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> int | List[str]:
-        if isinstance(v, str) and not v.startswith("["):
+    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+        if isinstance(v, str):
+            v = v.strip("[").strip("]").strip('"').strip("'")
+            if not v:
+                return []
             return [i.strip() for i in v.split(",")]
-        elif isinstance(v, (list, str)):
+        elif isinstance(v, list):
             return v
         raise ValueError(v)
 
-    # Database
-    DATABASE_URL: str
+    # Database - defaults to Supabase, override via env for local dev
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:TanmayAg@db.myvmzqrkitrqxummzhjw.supabase.co:5432/postgres"
 
     # AI
     GEMINI_API_KEY: str = ""
