@@ -21,7 +21,13 @@ import base64
 import os
 
 from app.db.local_db import LocalAsyncSession
-from app.models.local_models import LocalSession, LocalConversation, LocalStateTracking, LocalEvidence, LocalSenderType
+from app.models.local_models import (
+    LocalSession, 
+    LocalConversation, 
+    LocalSenderType,
+    LocalStateTracking
+)
+from app.models.local_models import LocalEvidence
 from app.models.beacon import Beacon
 from app.schemas.report import MessageResponse
 from app.services.llm_agent import LLMAgent
@@ -64,6 +70,7 @@ class ReportEngine:
         import traceback
         
         try:
+            print(f"[REPORT_ENGINE] ===== Processing message for {report_id} =====")
             async with LocalAsyncSession() as local_session:
                 # 1. Store user message locally
                 user_msg = LocalConversation(
@@ -81,18 +88,47 @@ class ReportEngine:
                 result = await local_session.execute(stmt)
                 history_objs = result.scalars().all()
                 
+                # Fetch persistent state context
+                state_stmt = select(LocalStateTracking).where(LocalStateTracking.session_id == report_id)
+                state_res = await local_session.execute(state_stmt)
+                state_tracking = state_res.scalar_one_or_none()
+                
+                current_state = {}
+                if state_tracking and state_tracking.context_data:
+                    current_state = state_tracking.context_data.get("extracted", {})
+                
                 # Convert to LLM format
                 conversation_history = []
                 for msg in history_objs:
-                    role = "user" if msg.sender == LocalSenderType.USER else "assistant"
+                    sender_str = str(msg.sender).split('.')[-1] if '.' in str(msg.sender) else str(msg.sender)
+                    role = "user" if sender_str == "USER" else "assistant"
+                    
                     conversation_history.append({
                         "role": role,
                         "content": msg.content
                     })
                 
                 # 3. Forward to LLM (LLM is sole conversational authority)
-                llm_response, final_report = await LLMAgent.chat(conversation_history)
+                # Pass current_state to LLM so it knows what it ALREADY confirmed
+                llm_response, new_extracted_data = await LLMAgent.chat(conversation_history, current_state)
+                print(f"[REPORT_ENGINE] LLM Response received: {len(llm_response)} chars, new_extracted={bool(new_extracted_data)}")
                 
+                # Update persistent state if new info discovered
+                if new_extracted_data and state_tracking:
+                    # Merge logic: New data overwrites/adds to old data
+                    updated_state = current_state.copy()
+                    for k, v in new_extracted_data.items():
+                        if v and v != "...": # Only merge meaningful data
+                            updated_state[k] = v
+                    
+                    # Store back to context_data
+                    # Use a fresh dict to ensure SQLAlchemy detects change
+                    new_context_data = dict(state_tracking.context_data)
+                    new_context_data["extracted"] = updated_state
+                    state_tracking.context_data = new_context_data
+                    await local_session.flush()
+                    print(f"[REPORT_ENGINE] Local state updated: {updated_state.keys()}")
+
                 # 4. Store LLM response locally
                 sys_msg = LocalConversation(
                     session_id=report_id,
@@ -101,47 +137,52 @@ class ReportEngine:
                 )
                 local_session.add(sys_msg)
                 
+                # Use merged state for final report if submittted
+                final_report = new_extracted_data if new_extracted_data else current_state
+
+                
                 # 5. Handle completion
                 next_step = "ACTIVE"
                 case_id = None
                 
-                if final_report:
+                # Trigger submission ONLY if placeholder is detected in text
+                # This ensures the AI leads the conversation closure.
+                if "CASE_ID_PLACEHOLDER" in llm_response:
                     next_step = "SUBMITTED"
                     
-                    # Generate Unique Case ID
-                    max_attempts = 100
-                    attempts = 0
-                    while attempts < max_attempts:
-                        candidate_id = LLMAgent.generate_case_id()
-                        # Check directly in Supabase beacon table
-                        check_stmt = select(Beacon).where(Beacon.case_id == candidate_id)
-                        check_res = await supabase_session.execute(check_stmt)
-                        if not check_res.scalar_one_or_none():
-                            case_id = candidate_id
-                            break
-                        attempts += 1
+                    # Generate Incremental Case ID via CaseService
+                    from app.services.case_service import CaseService
+                    # We need a supabase session for reading existing max IDs
+                    case_id = await CaseService.generate_next_case_id(supabase_session)
                     
-                    if not case_id:
-                        print(f"[REPORT_ENGINE] ERROR: Could not generate unique case ID after {max_attempts} attempts")
-                        case_id = LLMAgent.generate_case_id()  # Use anyway as fallback
+                    # Replace placeholder in LLM response
+                    llm_response = llm_response.replace("CASE_ID_PLACEHOLDER", case_id)
                     
-                    # Get first message timestamp for reported_at
-                    first_msg_stmt = select(LocalConversation).where(
-                        LocalConversation.session_id == report_id
-                    ).order_by(LocalConversation.created_at).limit(1)
-                    first_msg_res = await local_session.execute(first_msg_stmt)
-                    first_msg = first_msg_res.scalar_one_or_none()
-                    reported_at = first_msg.created_at if first_msg else datetime.utcnow()
+                    # Get reported_at timestamp (IST via time_utils)
+                    from app.core.time_utils import get_ist_now
+                    reported_at_ist = get_ist_now()
                     
-                    # Gather evidence files as Base64
-                    evidence_files = await ReportEngine._gather_evidence_base64(report_id, local_session)
+                    # Gather evidence files (Phase 1: Attempt upload, log partial failures, but do not block)
+                    evidence_files = await ReportEngine._upload_evidence_and_get_metadata(report_id, local_session)
                     
-                    # SINGLE INSERT to beacon table
+                    # ---------------------------------------------------------
+                    # PHASE 1: INTAKE (FAIL-SAFE)
+                    # Store Raw Data Immediately. No AI / Scoring here.
+                    # ---------------------------------------------------------
+                    
                     beacon_row = Beacon(
-                        reported_at=reported_at,
+                        reported_at=reported_at_ist,
                         case_id=case_id,
-                        evidence_files=evidence_files
-                        # incident_summary and credibility_score set via UPDATE in background
+                        evidence_files=evidence_files,
+                        created_at=reported_at_ist, 
+                        updated_at=reported_at_ist,
+                        # Phase 1 Fields
+                        analysis_status="pending",
+                        analysis_attempts=0,
+                        # AI Fields - Explicitly NULL
+                        incident_summary=None,
+                        credibility_score=None,
+                        score_explanation=None
                     )
                     supabase_session.add(beacon_row)
                     
@@ -161,25 +202,24 @@ class ReportEngine:
                     if state:
                         state.current_step = "SUBMITTED"
                     
+                    # COMMIT INTELLIGENCE (RAW DATA)
                     await local_session.commit()
+                    await supabase_session.commit()
                     
-                    # Trigger Background Scoring (updates beacon via UPDATE)
-                    from app.services.scoring_service import ScoringService
+                    print(f"[REPORT_ENGINE] ✅ Phase 1 Complete. Report {case_id} stored safely.")
+
+                    # ---------------------------------------------------------
+                    # PHASE 2: TRIGGER ASYNC ANALYSIS
+                    # ---------------------------------------------------------
                     if background_tasks:
-                        background_tasks.add_task(
-                            ScoringService.run_background_scoring, 
-                            report_id,  # session_id for local data
-                            case_id     # case_id for beacon update
-                        )
+                        from app.services.scoring_service import ScoringService
+                        background_tasks.add_task(ScoringService.run_background_scoring, report_id, case_id)
+                        print(f"[REPORT_ENGINE] 🚀 Phase 2 Triggered (Async Scoring) for {case_id}")
                     else:
-                        print("[REPORT_ENGINE] WARNING: BackgroundTasks not provided for scoring.")
-                
+                        print(f"[REPORT_ENGINE] ⚠️ No BackgroundTasks object! Phase 2 skipped (Manually trigger required).")
+
+                # Always commit local session (messages + state) for every turn
                 await local_session.commit()
-                await supabase_session.commit()
-                
-                # Log successful storage for debugging
-                if final_report and case_id:
-                    print(f"[REPORT_ENGINE] Created beacon entry with case_id: {case_id}")
                 
                 return MessageResponse(
                     report_id=UUIDType(report_id),  # Convert string to UUID
@@ -197,11 +237,12 @@ class ReportEngine:
             raise
 
     @staticmethod
-    async def _gather_evidence_base64(session_id: str, local_session: AsyncSession) -> list:
+    async def _upload_evidence_and_get_metadata(session_id: str, local_session: AsyncSession) -> list:
         """
-        Gather all evidence files for a session and encode as Base64.
-        Returns list of dicts with file_name, mime_type, size_bytes, content_base64.
+        Uploads evidence files to Supabase Storage and returns metadata list.
         """
+        from app.services.storage_service import StorageService
+        
         evidence_files = []
         
         stmt = select(LocalEvidence).where(LocalEvidence.session_id == session_id)
@@ -213,24 +254,15 @@ class ReportEngine:
                 with open(ev.file_path, "rb") as f:
                     file_bytes = f.read()
                 
-                content_base64 = base64.b64encode(file_bytes).decode('utf-8')
+                # Upload to Supabase
+                upload_meta = await StorageService.upload_file(file_bytes, ev.file_name, ev.mime_type)
+                evidence_files.append(upload_meta)
                 
-                evidence_files.append({
-                    "file_name": ev.file_name,
-                    "mime_type": ev.mime_type,
-                    "size_bytes": ev.size_bytes,
-                    "file_hash": ev.file_hash,
-                    "content_base64": content_base64
-                })
             except Exception as e:
-                print(f"[REPORT_ENGINE] Error reading evidence file {ev.file_path}: {e}")
-                # Still include metadata even if file read fails
+                print(f"[REPORT_ENGINE] Error uploading evidence file {ev.file_path}: {e}")
+                # Store error metadata
                 evidence_files.append({
                     "file_name": ev.file_name,
-                    "mime_type": ev.mime_type,
-                    "size_bytes": ev.size_bytes,
-                    "file_hash": ev.file_hash,
-                    "content_base64": None,
                     "error": str(e)
                 })
         

@@ -46,6 +46,11 @@ class Beacon(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Two-Phase Analysis Tracking
+    analysis_status = Column(String, default="pending", nullable=False) # 'pending' or 'completed'
+    analysis_attempts = Column(Integer, default=0, nullable=False)
+    analysis_last_error = Column(Text, nullable=True) # Internal debugging only
     
     @staticmethod
     def validate_case_id(case_id: str) -> bool:

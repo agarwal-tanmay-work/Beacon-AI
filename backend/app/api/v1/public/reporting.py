@@ -17,6 +17,7 @@ from app.services.report_engine import ReportEngine
 import secrets
 import hashlib
 import uuid as uuid_module
+from datetime import datetime
 
 router = APIRouter()
 
@@ -110,9 +111,16 @@ async def send_message(
             raise HTTPException(status_code=400, detail="This session is closed.")
         
         if session.is_submitted:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"This report has been submitted. Case ID: {session.case_id}"
+            # Instead of rejecting, gracefully return the Case ID the user missed
+            from app.models.report import SenderType
+            from uuid import UUID as UUIDType
+            return MessageResponse(
+                report_id=UUIDType(session_id),
+                sender=SenderType.SYSTEM,
+                content=f"Your report has already been submitted. Your Case ID is: **{session.case_id}**. Please save this ID to track your case.",
+                timestamp=datetime.utcnow(),
+                next_step="SUBMITTED",
+                case_id=session.case_id
             )
     
     # Process Message (uses both local and Supabase sessions)

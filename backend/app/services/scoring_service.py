@@ -1,14 +1,15 @@
 """
-Scoring Service - Comprehensive Credibility Analysis.
+ScoringService - Phase 2 Analysis Engine (Async & Strict).
 
-Updates beacon table via UPDATE (never INSERT).
-Generates:
-- incident_summary: Combines ALL user answers
-- credibility_score: Integer 1-100 (permanent)
-- score_explanation: Detailed reasoning
+Responsibilities:
+1. Fetch raw data (Chat History, Evidence) from Local/Supabase.
+2. Generate Intelligence (Summary, Score, Explanation) via AI.
+3. STRICT VALIDATION: No placeholders, no defaults, no missing fields.
+4. ATOMIC UPDATE: Write to 'beacon' table ONLY if all checks pass.
+5. Error Handling: Log internal errors, keep status='pending' for retry.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from app.services.ai_service import GroqService
@@ -19,162 +20,181 @@ from app.models.local_models import LocalConversation, LocalEvidence, LocalSende
 import structlog
 import asyncio
 import json
-import base64
+import os
+from datetime import datetime
 
 logger = structlog.get_logger()
 
-
 class ScoringService:
     """
-    Orchestrates the Comprehensive Credibility Scoring Workflow.
-    
-    Key: Updates beacon table via UPDATE, never creates new rows.
+    Phase 2: Asynchronous Analysis Engine.
     """
     
     @staticmethod
     async def run_background_scoring(session_id: str, case_id: str):
         """
-        Background task to calculate scores and UPDATE beacon table.
-        
-        Args:
-            session_id: Local session ID (for fetching conversation history)
-            case_id: Beacon case_id (for updating beacon table)
+        Background Entry Point.
+        - Idempotent-ish (can be retried).
+        - Updates Beacon table atomically on success.
+        - Updates analysis_attempts/last_error on failure.
         """
-        logger.info("background_scoring_started", session_id=session_id, case_id=case_id)
+        logger.info("phase2_analysis_started", session_id=session_id, case_id=case_id)
         
         async with AsyncSessionLocal() as supabase_session:
             async with LocalAsyncSession() as local_session:
                 try:
-                    results = await ScoringService.calculate_comprehensive_score(
-                        session_id, 
-                        local_session
-                    )
+                    # 1. Fetch Raw Data
+                    chat_history = await ScoringService._fetch_chat_history(session_id, local_session)
+                    evidence_objs = await ScoringService._fetch_evidence(session_id, local_session)
                     
-                    if results:
-                        # UPDATE beacon table (never INSERT)
-                        stmt = (
-                            update(Beacon)
-                            .where(Beacon.case_id == case_id)
-                            .values(
-                                incident_summary=results.get("incident_summary"),
-                                credibility_score=results.get("credibility_score"),
-                                score_explanation=results.get("score_explanation")
-                            )
-                        )
-                        await supabase_session.execute(stmt)
-                        await supabase_session.commit()
+                    if not chat_history:
+                        raise ValueError("No chat history found for analysis.")
+
+                    # 2. Perform AI Analysis (Strict Mode)
+                    analysis_results = await ScoringService._perform_strict_analysis(chat_history, evidence_objs)
+                    
+                    if not analysis_results:
+                        raise ValueError("AI Analysis returned None (Strict Validation Failed).")
+                    
+                    print(f"[DEBUG] Analysis Results: {json.dumps(analysis_results, indent=2)}")
                         
-                        logger.info(
-                            "background_scoring_completed", 
-                            case_id=case_id, 
-                            score=results.get("credibility_score")
-                        )
-                    else:
-                        logger.warning("background_scoring_no_results", case_id=case_id)
-                        
+                    # 3. Validate Outputs (Double Check)
+                    ScoringService._assert_no_placeholders(analysis_results)
+                    
+                    # 4. Atomic Commit
+                    await ScoringService._commit_valid_results(case_id, analysis_results, supabase_session)
+                    
                 except Exception as e:
-                    logger.error("background_scoring_failed", case_id=case_id, error=str(e))
-                    import traceback
-                    traceback.print_exc()
+                    logger.error("phase2_analysis_failed", case_id=case_id, error=str(e))
+                    await ScoringService._record_failure(case_id, str(e), supabase_session)
 
     @staticmethod
-    async def calculate_comprehensive_score(
-        session_id: str, 
-        local_session: AsyncSession
-    ) -> Dict[str, Any]:
+    async def _perform_strict_analysis(chat_history: List[Dict], evidence_objs: List[Any]) -> Optional[Dict[str, Any]]:
         """
-        Full analysis pipeline:
-        1. Fetch ALL conversation history from local DB
-        2. Generate incident_summary combining ALL user answers
-        3. Extract credibility features
-        4. Calculate deterministic score
-        5. Generate score_explanation
-        
-        Returns dict with incident_summary, credibility_score, score_explanation.
+        Orchestrates AI calls. Returns None if ANY component fails.
         """
-        
-        # 1. Fetch ALL conversation history from local DB
-        conv_stmt = select(LocalConversation).where(
-            LocalConversation.session_id == session_id
-        ).order_by(LocalConversation.created_at)
-        conv_res = await local_session.execute(conv_stmt)
-        history_objs = conv_res.scalars().all()
-        
-        if not history_objs:
-            logger.error("no_conversation_history", session_id=session_id)
-            return {}
-        
-        chat_history = []
-        for msg in history_objs:
-            role = "user" if msg.sender == LocalSenderType.USER else "assistant"
-            chat_history.append({"role": role, "content": msg.content})
-        
-        # 2. Fetch evidence info
-        ev_stmt = select(LocalEvidence).where(LocalEvidence.session_id == session_id)
-        ev_res = await local_session.execute(ev_stmt)
-        evidence_objs = ev_res.scalars().all()
-        
-        evidence_count = len(evidence_objs)
+        # Evidence Analysis
         evidence_summary_text = "No evidence provided."
-        evidence_analysis_results = []
-        
         if evidence_objs:
             evidence_analyses = []
             for ev in evidence_objs:
                 try:
-                    with open(ev.file_path, "rb") as f:
-                        file_bytes = f.read()
-                    
-                    analysis = await GroqService.analyze_evidence(file_bytes, ev.mime_type)
-                    evidence_analyses.append(f"File {ev.file_name}: {analysis.get('analysis', 'No analysis')}")
-                    evidence_analysis_results.append({
-                        "file_name": ev.file_name,
-                        "analysis": analysis
-                    })
+                    f_path = ev.file_path
+                    f_mime = ev.mime_type
+                    if os.path.exists(f_path):
+                        with open(f_path, "rb") as f:
+                            file_bytes = f.read()
+                        analysis = await GroqService.analyze_evidence(file_bytes, f_mime)
+                        evidence_analyses.append(f"File {ev.file_name}: {analysis.get('analysis', 'No analysis')}")
+                    else:
+                        evidence_analyses.append(f"File {ev.file_name}: File missing")
                 except Exception as e:
-                    logger.error("evidence_read_failed", file_path=ev.file_path, error=str(e))
-                    evidence_analyses.append(f"File {ev.file_name}: Analysis failed")
+                    logger.warning("evidence_analysis_partial_fail", error=str(e))
+            if evidence_analyses:
+                evidence_summary_text = "; ".join(evidence_analyses)
+
+        # Incident Summary
+        summary = await GroqService.generate_pro_summary(chat_history)
+        if not summary or "INSUFFICIENT" in summary.upper():
+            logger.warning("analysis_aborted_invalid_summary")
+            return None
+
+        # Credibility Score
+        metadata = {"evidence_count": len(evidence_objs), "timestamp": str(datetime.utcnow())}
+        score_data = await GroqService.calculate_scoring_rubric(chat_history, evidence_summary_text, metadata)
+        
+        if not score_data:
+            logger.warning("analysis_aborted_scoring_failed")
+            return None
             
-            evidence_summary_text = "; ".join(evidence_analyses)
+        score = score_data.get("score")
+        explanation = score_data.get("explanation")
         
-        # 3. Generate Professional Summary (combines ALL user answers)
-        # This is critical: include EVERYTHING user provided, exclude nothing
-        summary_text = await GroqService.generate_pro_summary(chat_history)
-        
-        if not summary_text or summary_text == "None":
-            summary_text = "Insufficient information provided by the reporter."
-        
-        # 4. Extract Credibility Features
-        metadata = {
-            "created_at": history_objs[0].created_at if history_objs else None,
-            "evidence_count": evidence_count
-        }
-        
-        features = await GroqService.extract_credibility_features(
-            chat_history, 
-            evidence_summary_text, 
-            metadata
-        )
-        
-        if not features:
-            logger.error("scoring_failed_no_features", session_id=session_id)
-            # Fallback to basic scoring
-            return {
-                "incident_summary": summary_text,
-                "credibility_score": 50,  # Default middle score
-                "score_explanation": "Unable to perform full credibility analysis. Default score assigned."
-            }
-        
-        # 5. Deterministic Scoring
-        from app.core.scoring_logic import calculate_deterministically
-        
-        score_result = calculate_deterministically(features, metadata)
-        
-        final_score = max(1, min(score_result["final_score"], 100))
-        justification = score_result["justification"]
-        
+        # Strict constraints
+        if score is None or not (1 <= score <= 100):
+            logger.warning("analysis_aborted_invalid_score", score=score)
+            return None
+            
+        if not explanation or len(explanation) < 10:
+             logger.warning("analysis_aborted_invalid_explanation")
+             return None
+
         return {
-            "incident_summary": summary_text,
-            "credibility_score": final_score,
-            "score_explanation": justification
+            "incident_summary": summary,
+            "credibility_score": score,
+            "score_explanation": explanation
         }
+
+    @staticmethod
+    def _assert_no_placeholders(data: Dict[str, Any]):
+        """
+        Final safety check for forbidden strings. Raises ValueError if found.
+        """
+        forbidden = [
+            "insert summary here", "automated scoring unavailable", 
+            "system error", "default neutral", "insufficient information",
+            "[insert", "[add summary", "placeholder summary"
+        ]
+        
+        combined = (str(data.get("incident_summary")) + str(data.get("score_explanation"))).lower()
+        
+        for term in forbidden:
+            if term in combined:
+                raise ValueError(f"Strict Check Failed: Forbidden validation term '{term}' found in output.")
+
+    @staticmethod
+    async def _commit_valid_results(case_id: str, results: Dict[str, Any], session: AsyncSession):
+        """
+        Writes valid results to DB and sets status='completed'.
+        """
+        stmt = (
+            update(Beacon)
+            .where(Beacon.case_id == case_id)
+            .values(
+                incident_summary=results["incident_summary"],
+                credibility_score=results["credibility_score"],
+                score_explanation=results["score_explanation"],
+                analysis_status="completed",
+                analysis_last_error=None # Clear previous errors
+            )
+        )
+        await session.execute(stmt)
+        await session.commit()
+        logger.info("phase2_analysis_success", case_id=case_id)
+
+    @staticmethod
+    async def _record_failure(case_id: str, error_msg: str, session: AsyncSession):
+        """
+        Updates failure stats without changing analysis_status from 'pending'.
+        """
+        try:
+            # We want to increment logic. SA update with increment is cleaner, 
+            # but fetching first is safer for simple logic.
+            # actually strict SQL update is better for concurrency.
+            stmt = (
+                update(Beacon)
+                .where(Beacon.case_id == case_id)
+                .values(
+                    analysis_attempts=Beacon.analysis_attempts + 1,
+                    analysis_last_error=error_msg[:1000] # Truncate likely
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+        except Exception as e:
+            logger.error("failure_recording_failed", error=str(e))
+
+    @staticmethod
+    async def _fetch_chat_history(session_id: str, local_session: AsyncSession) -> List[Dict]:
+        stmt = select(LocalConversation).where(
+            LocalConversation.session_id == session_id
+        ).order_by(LocalConversation.created_at)
+        result = await local_session.execute(stmt)
+        objs = result.scalars().all()
+        return [{"role": "user" if m.sender == LocalSenderType.USER else "assistant", "content": m.content} for m in objs]
+
+    @staticmethod
+    async def _fetch_evidence(session_id: str, local_session: AsyncSession) -> List[LocalEvidence]:
+        stmt = select(LocalEvidence).where(LocalEvidence.session_id == session_id)
+        result = await local_session.execute(stmt)
+        return result.scalars().all()

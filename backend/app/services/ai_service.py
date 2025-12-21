@@ -17,11 +17,11 @@ class GroqService:
     """
     
     BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
-    TIMEOUT = 30.0 
+    TIMEOUT = 60.0 # Increased for stability during complex scoring 
     
     # Models
-    TEXT_MODEL = "llama3-70b-8192"
-    VISION_MODEL = "llama-3.2-11b-vision-preview" # Or 90b if available/needed
+    TEXT_MODEL = "llama-3.3-70b-versatile"
+    VISION_MODEL = "llama-3.2-11b-vision-preview"
 
     @classmethod
     async def _call_groq(cls, messages: List[Dict[str, Any]], schema_class: Optional[Type[T]] = None, model: str = TEXT_MODEL) -> Optional[T | str]:
@@ -44,19 +44,16 @@ class GroqService:
             # Prepend system instruction
             messages.insert(0, {"role": "system", "content": system_instruction})
             
-            # Defensive: Ask for JSON mode if supported or just prompt engineering
-            # Groq supports json_object response format
-            response_format = {"type": "json_object"}
-        else:
-            response_format = {"type": "text"}
-            
         payload = {
             "model": model,
             "messages": messages,
             "temperature": 0.2,
             "max_tokens": 1024,
-            "response_format": response_format
         }
+        
+        # Only add response_format for JSON mode - Groq doesn't support "text" type
+        if schema_class:
+            payload["response_format"] = {"type": "json_object"}
 
         async with httpx.AsyncClient() as client:
             try:
@@ -85,6 +82,7 @@ class GroqService:
 
             except Exception as e:
                 logger.error("groq_request_failed", error=str(e))
+                print(f"[GroqService] ❌ REQUEST FAILED: {e}")
                 return None
 
     @classmethod
@@ -98,6 +96,8 @@ class GroqService:
                 f"Report Text: {report_text}"
             )
         }]
+
+        print(f"[GroqService] Analyzing Report: {report_text[:50]}...")
         return await cls._call_groq(messages, AIAnalysisResult)
 
     @classmethod
@@ -206,13 +206,14 @@ OUTPUT format: Strict JSON matching the provided schema.
         messages = [{
             "role": "user",
             "content": (
-                "You are a professional intelligence analyst. Write a single, dense, detailed paragraph summarizing this corruption report. "
+                "You are a professional intelligence analyst. Write a detailed summary of this corruption report.\n"
                 "CRITICAL RULES:\n"
                 "1. PRESERVE EVERY SINGLE DETAIL provided by the user (dates, times, locations, names, amounts, clothing, dialogue, etc). Do not omit anything.\n"
                 "2. ANONYMIZE the Victim/Reporter: Redact their name or personal identifiers if mentioned (e.g., use 'reporting party').\n"
                 "3. EXPOSE the Perpetrator: Include the full name and details of the corrupt official/person exactly as stated.\n"
                 "4. ZERO FLUFF: Do not add intro/outro or AI interpretation. Write only the facts from the user's input.\n\n"
-                "If the user provided no details, state 'Insufficient information provided.'\n\n"
+                "If the user provided absolutely no details (empty conversation), state 'Insufficient information provided by the reporter.' "
+                "However, if there is ANY detail (e.g., 'Policeman asked for bribe'), summarize that fully.\n\n"
                 f"Conversation Log:\n{conversation_text}"
             )
         }]
@@ -220,69 +221,59 @@ OUTPUT format: Strict JSON matching the provided schema.
         return str(result)
 
     @classmethod
-    async def check_consistency(cls, summary: str, evidence_desc: str) -> Dict[str, Any]:
-        class ConsistencyResult(BaseModel):
+    async def calculate_scoring_rubric(
+        cls, 
+        chat_history: List[Dict[str, str]], 
+        evidence_summary: str, 
+        metadata: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Calculates credibility score and explanation using the User's strict rubric.
+        """
+        
+        class ScoringResult(BaseModel):
             score: int
-            match_status: str
-            reasoning: str
-
-        messages = [{
-            "role": "user",
-            "content": (
-                "Compare the Incident Summary with the Evidence Analysis. "
-                "Do they support each other? Are there contradictions? "
-                "Return JSON with 'score' (0-100), 'match_status', and 'reasoning'.\n\n"
-                f"Incident Summary: {summary}\n"
-                f"Evidence Analysis: {evidence_desc}"
-            )
-        }]
-        result = await cls._call_groq(messages, ConsistencyResult)
-        if result:
-            return result.model_dump()
-        return {"score": 50, "match_status": "Unknown", "reasoning": "Analysis failed"}
-
-    @classmethod
-    async def analyze_tone(cls, chat_history: List[Dict[str, str]]) -> Dict[str, Any]:
-        class ToneResult(BaseModel):
-            emotional_state: str
-            logical_consistency: str
-            vagueness_level: str
-            notes: str
-
-        user_text = "\n".join([msg['content'] for msg in chat_history if msg['role'] == 'user'])
-        messages = [{
-            "role": "user",
-            "content": (
-                "Analyze the writing style of this reporter. "
-                "Focus on: Specificity, Emotional Consistency, Logical Flow. "
-                "Return JSON with 'emotional_state', 'logical_consistency', 'vagueness_level', and 'notes'.\n\n"
-                f"User Text: {user_text}"
-            )
-        }]
-        result = await cls._call_groq(messages, ToneResult)
-        if result:
-            return result.model_dump()
-        return {}
-
-    @classmethod
-    async def detect_fabrication(cls, chat_history: List[Dict[str, str]]) -> Dict[str, Any]:
-        class FabricationResult(BaseModel):
-            risk_score: int
-            flags: list[str]
-            assessment: str
-
+            explanation: str
+            breakdown: Dict[str, int]
+        
         conversation_text = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in chat_history])
-        messages = [{
-            "role": "user",
-            "content": (
-                "Analyze this report for signs of fabrication, hallucination, or spam. "
-                "Look for: Over-dramatization, convenient lack of detail when pressed, contradictory timelines, "
-                "or generic 'spam-like' patterns. "
-                "Return JSON with 'risk_score' (0-100 where 100 is high risk of fake), 'flags', and 'assessment'.\n\n"
-                f"Conversation: {conversation_text}"
-            )
-        }]
-        result = await cls._call_groq(messages, FabricationResult)
+        
+        rubric_prompt = """
+Design a credibility scoring engine for Beacon AI that assigns each corruption report an explainable score from 1 to 100 based strictly on user-provided information only.
+The score must consider completeness of details (what, where, when, how), internal consistency of the narrative, quality and relevance of any uploaded evidence (images, documents, videos, audio, OCR and tamper signals), tone and language sincerity, time gap between incident and reporting, similarity or corroboration with past anonymized reports, and the user’s responsiveness to follow-up questions. Apply negative penalties for indicators of spam, fabrication, defamation, automation, or manipulated evidence, but never penalize anonymity or lack of evidence alone. Do not infer, assume, or add facts. The score must reflect reliability and actionability, not legal truth or guilt, and must include a concise neutral justification suitable for authority review while respecting privacy, ethics, and non-bias principles.
+
+OUTPUT JSON FORMAT:
+{
+    "score": <integer 1-100>,
+    "explanation": "<concise neutral justification>",
+    "breakdown": {
+        "completeness": <score>,
+        "consistency": <score>,
+        "evidence": <score>,
+        "tone": <score>,
+        "temporal": <score>,
+        "penalties": <negative_score>
+    }
+}
+"""
+
+        messages = [
+            {"role": "system", "content": rubric_prompt},
+            {
+                "role": "user", 
+                "content": (
+                    "Calculate the Credibility Score based on this report:\n\n"
+                    f"Conversation Log:\n{conversation_text}\n\n"
+                    f"Evidence Summary:\n{evidence_summary}\n\n"
+                    f"Metadata:\n{json.dumps(metadata, default=str)}"
+                )
+            }
+        ]
+        
+        result = await cls._call_groq(messages, ScoringResult)
         if result:
             return result.model_dump()
-        return {}
+            
+        # Strict Mode: Return None on failure. No defaults.
+        return None
+

@@ -5,66 +5,30 @@ import secrets
 from typing import Tuple, Optional
 from app.core.config import settings
 
-# SYSTEM PROMPT - Beacon AI (Polite, Warm, Progressive)
+# SYSTEM_PROMPT - Beacon AI (Compassionate & Accurate)
 SYSTEM_PROMPT = """You are Beacon AI, a warm and compassionate assistant helping citizens report corruption safely and anonymously.
 
 🌟 YOUR PERSONA:
-- Speak like a kind, understanding friend who genuinely cares
-- Be warm, supportive, and reassuring at all times
-- Use simple, clear language
-- Keep responses concise (2-3 sentences max)
+- Speak like a kind, understanding friend who genuinely cares.
+- Be warm, supportive, and reassuring.
+- Keep responses concise (2-3 sentences max).
 
-⚡ CRITICAL RULES:
-1. When user provides information, ACKNOWLEDGE IT and MOVE TO THE NEXT QUESTION.
-2. If the user refuses to answer or gives a vague answer, MAINTAIN YOUR WARM PERSONA, but explain why the detail is helpful and ASK AGAIN. Do not skip important details (What, Where, When).
-3. When you need more details, ask POLITELY without saying their answer is "vague" or "unclear". 
-   
-   INSTEAD OF: "That's vague, please be specific"
-   SAY: "Could you help me with a few more details? What's the exact name of the place?"
-   
-   INSTEAD OF: "When exactly?"  
-   SAY: "Do you remember the date this happened? Even an approximate date helps."
-
-📎 EVIDENCE UPLOAD RULE (VERY IMPORTANT):
-- If the user mentions having ANY type of evidence (photo, receipt, document, video, screenshot, file, proof, etc.), you MUST ask them to upload it using the upload button.
-- Say something like: "That's great that you have evidence! Please upload it using the paperclip/upload button on the left side of the chat. I'll wait for you to upload it."
-- WAIT for them to confirm the upload before moving to the next question.
-- Do NOT proceed to the next step until they have uploaded or explicitly said they cannot.
-
-🎯 CONVERSATION FLOW (One question at a time):
-
-1. GREETING: Warmly welcome them and ask what happened.
-
-2. WHAT HAPPENED: Once they share the issue, acknowledge and move on.
-
-3. FULL STORY: "Thank you for sharing. Could you walk me through what happened from start to finish?"
-
-4. WHERE: "Could you tell me where this happened? The name of the shop, office, or place and the city would help."
-
-5. WHEN: "Do you remember when this happened? The date would be helpful."
-
-6. WHO: "Can you describe who was involved? Their role or position?"
-
-7. EVIDENCE: "Do you have any evidence like a receipt, photo, document, or video? It's completely okay if you don't."
-   - If they say YES or mention having evidence: Ask them to upload it using the upload button.
-   - If they say NO: Acknowledge and move to the next step.
-
-8. OPTIONAL PERSONAL DETAILS (Hybrid Anonymity):
-   "Finally, reporting is completely anonymous by default. However, if you wish to be contacted / updated, you may optionally provide your name or contact info. This is completely up to you and skipping it will not affect your report. Would you like to add any details?"
+🎯 YOUR GOAL:
+Gather the following 5 details. A [CONFIRMED FACTS] block is at the top. DO NOT ask for items already in that block.
+Only ask ONE question at a time.
+1. WHAT: The incident story
+2. WHERE: City, Location
+3. WHEN: Date, Time
+4. WHO: Names, Roles
+5. EVIDENCE: Boolean and description
 
 ✅ WHEN ALL DETAILS ARE GATHERED:
 Say exactly this (the system will replace CASE_ID_PLACEHOLDER with the real ID):
 "Thank you for your courage in reporting this. Your Case ID is CASE_ID_PLACEHOLDER. Please save this ID to track your case. We will investigate and take appropriate action. You've done the right thing by speaking up."
 
-⛔ CASE ID RULES (ABSOLUTE):
-- NEVER generate or invent your own Case ID.
-- NEVER use formats like Case-12345, case_id_123, CASE123456, or any numeric ID.
-- ONLY use the exact placeholder: CASE_ID_PLACEHOLDER
-- The system will automatically replace it with the correct format (BCN followed by 12 digits).
-
-Then add at the very end:
+JSON EXTRACTION (Please include at the very bottom of your response):
 ```json
-{"what": "...", "where": "...", "when": "...", "who": "...", "evidence": "...", "story": "..."}
+{"what": "...", "where": "...", "when": "...", "who": "...", "evidence": "..."}
 ```"""
 
 
@@ -72,31 +36,77 @@ class LLMAgent:
     """Groq-powered LLM Agent."""
     
     GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-    GROQ_MODEL = "llama-3.1-8b-instant"
+    GROQ_MODEL = "llama-3.3-70b-versatile" # Restored 70B for better accuracy and logic adherence
     
     @staticmethod
-    def generate_case_id() -> str:
-        """Generate a unique 15-character Case ID: BCN + 12 digits."""
-        # BCN (3) + 12 numeric digits = 15 characters total
-        random_digits = ''.join(secrets.choice('0123456789') for _ in range(12))
-        return f"BCN{random_digits}"
-    
-    @staticmethod
-    async def chat(conversation_history: list) -> Tuple[str, Optional[dict]]:
+    async def chat(conversation_history: list, current_state: dict = None) -> Tuple[str, Optional[dict]]:
         api_key = settings.GROQ_API_KEY
         if not api_key:
             return ("System Error: API not configured.", None)
+
+        # 1. LOCAL FACT SCRAPER (Safety Net)
+        # Even if a previous JSON extraction failed, we scan history here 
+        # to ensure the 'confirmed facts' block is as accurate as possible.
+        state = current_state.copy() if current_state else {}
         
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        # Keywords for local fallback detection
         for msg in conversation_history:
-            role = "user" if msg["role"] == "user" else "assistant"
+            if msg["role"] == "user":
+                content_lower = msg["content"].lower()
+                # Detection patterns (Same as before but used here to augment the state)
+                if not state.get("what") and any(kw in content_lower for kw in ["bribe", "charged", "demanded", "asked for money", "corruption", "happened", "extra", "story", "incident", "ice cream", "money", "rupees", "payment"]):
+                    state["what"] = msg["content"][:200]
+                if not state.get("where") and any(kw in content_lower for kw in ["road", "street", "city", "shop", "office", "area", "delhi", "mumbai", "kalimpong", "store", "located", "place"]):
+                    state["where"] = msg["content"][:200]
+                if not state.get("when") and any(kw in content_lower for kw in ["yesterday", "today", "last week", "monday", "tuesday", "morning", "evening", "date", "january", "february", "clock", "time", "pm", "am"]):
+                    state["when"] = msg["content"][:200]
+                if not state.get("who") and any(kw in content_lower for kw in ["officer", "clerk", "shopkeeper", "man", "woman", "manager", "inspector", "person", "staff", "employee"]):
+                    state["who"] = msg["content"][:200]
+                if not state.get("evidence") and any(kw in content_lower for kw in ["photo", "receipt", "video", "document", "proof", "screenshot", "yes i have", "file", "paperclip"]):
+                    state["evidence"] = msg["content"][:200]
+
+        # 2. Build the PROGRESS SUMMARY from the explicit state
+        summary_parts = []
+        if state.get("what"): summary_parts.append(f"- STORY/WHAT: {state['what'][:100]}...")
+        if state.get("where"): summary_parts.append(f"- LOCATION/WHERE: {state['where'][:100]}...")
+        if state.get("when"): summary_parts.append(f"- DATE/WHEN: {state['when'][:100]}...")
+        if state.get("who"): summary_parts.append(f"- WHO INVOLVED: {state['who'][:100]}...")
+        if state.get("evidence"): summary_parts.append(f"- EVIDENCE: {state['evidence'][:100]}...")
+        
+        summary_text = "\n".join(summary_parts) if summary_parts else "No information yet."
+
+        # 3. Construct messages with summary at the TOP
+        full_system_prompt = f"{SYSTEM_PROMPT}\n\n### [CONFIRMED FACTS] ###\nYou already have this information (DO NOT ASK AGAIN):\n{summary_text}\n##########################"
+        
+        messages = [{"role": "system", "content": full_system_prompt}]
+        for msg in conversation_history:
+            role = "user" if msg["role"].lower() == "user" else "assistant"
             messages.append({"role": role, "content": msg["content"]})
+            
+        # 4. Add blunt trailing instruction
+        next_missing = "Story/What"
+        if state.get("what"): next_missing = "Location/Where"
+        if state.get("what") and state.get("where"): next_missing = "Date/When"
+        if state.get("what") and state.get("where") and state.get("when"): next_missing = "Who Involved"
+        if state.get("what") and state.get("where") and state.get("when") and state.get("who"): next_missing = "Evidence (Invite to upload)"
+        
+        override_text = f"The user already provided {', '.join(k.upper() for k,v in state.items() if v)}. ASK ONLY about {next_missing} next."
+        if all([state.get("what"), state.get("where"), state.get("when"), state.get("who")]):
+            if not state.get("evidence"):
+                override_text = "Ask if they have any evidence and invite them to use the upload button."
+            else:
+                override_text = "All info gathered. Conclude the report with the Case ID."
+
+        messages.append({
+            "role": "system", 
+            "content": f"[SYSTEM OVERRIDE]: {override_text}"
+        })
         
         payload = {
             "model": LLMAgent.GROQ_MODEL,
             "messages": messages,
-            "temperature": 0.5, # Slightly lower temp for more consistent adherence to rules
-            "max_tokens": 512
+            "temperature": 0.3, 
+            "max_tokens": 1024
         }
         
         headers = {
@@ -105,41 +115,33 @@ class LLMAgent:
         }
         
         try:
+            print(f"[LLM_AGENT] Calling Groq API...")
+            # DEBUG: Print messages to see what context LLM gets
+            print(json.dumps(messages, indent=2)) 
+            
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     LLMAgent.GROQ_API_URL, json=payload, headers=headers, timeout=60.0
                 )
+                print(f"[LLM_AGENT] Groq API Response: {response.status_code}")
                 
                 if response.status_code == 200:
                     data = response.json()
                     text_response = data["choices"][0]["message"]["content"]
                     
-                    final_report = LLMAgent._extract_report(text_response)
+                    # 5. Extract fresh JSON from AI
+                    fresh_extracted = LLMAgent._extract_report(text_response) or {}
+                    
+                    # 6. Merge with our high-confidence local scraper findings
+                    # This ensures the DB gets the augmented state
+                    final_report_to_save = state.copy()
+                    for k, v in fresh_extracted.items():
+                        if v and v != "...":
+                            final_report_to_save[k] = v
+                            
                     clean_response = LLMAgent._clean_response(text_response)
                     
-                    # If final report detected, generate ONE case ID
-                    if final_report:
-                        case_id = LLMAgent.generate_case_id()
-                        final_report["case_id"] = case_id
-                        # Replace placeholder with actual case ID
-                        clean_response = clean_response.replace("CASE_ID_PLACEHOLDER", case_id)
-                        # Also catch CASE_PLACEHOLDER (user reported issue)
-                        clean_response = clean_response.replace("CASE_PLACEHOLDER", case_id)
-                        
-                        # Replace any LLM-generated case IDs with our BCN format
-                        # Pattern: Case-123456, case_123456, CASE123456
-                        clean_response = re.sub(r'\b[Cc]ase[-_]?\d{4,10}\b', case_id, clean_response)
-                        clean_response = re.sub(r'\bCASE[-_]?ID[-_]?\d{4,10}\b', case_id, clean_response, flags=re.IGNORECASE)
-                        # Pattern: case_id_12345 (underscore separated)
-                        clean_response = re.sub(r'\bcase_id_\d+\b', case_id, clean_response, flags=re.IGNORECASE)
-                        # Pattern: CASEID12345, CaseId12345
-                        clean_response = re.sub(r'\b[Cc][Aa][Ss][Ee][Ii][Dd]\d+\b', case_id, clean_response)
-                        # Pattern: #12345 or ID: 12345 (generic ID patterns)
-                        clean_response = re.sub(r'\bID[:\s]+\d{5,}\b', f'Case ID: {case_id}', clean_response, flags=re.IGNORECASE)
-                        # Remove any duplicate case ID mentions
-                        clean_response = re.sub(r'\n\nYour Case ID:.*$', '', clean_response)
-                    
-                    return clean_response, final_report
+                    return clean_response, final_report_to_save
                 else:
                     return ("Technical difficulty. Please try again.", None)
                     
@@ -149,9 +151,12 @@ class LLMAgent:
     
     @staticmethod
     def _clean_response(text: str) -> str:
-        text = re.sub(r'```json\s*\{[\s\S]*?\}\s*```', '', text)
-        text = re.sub(r'\{\s*"what"\s*:[\s\S]*?\}', '', text)
-        text = re.sub(r'credibility\s*(score|rating)?[:\s]*\w+', '', text, flags=re.IGNORECASE)
+        # 1. Remove backticked JSON block
+        text = re.sub(r'```json\s*\{[\s\S]*?\}\s*```', '', text, flags=re.DOTALL)
+        # 2. Remove Thought block (Dotall mode)
+        text = re.sub(r'<thought>[\s\S]*?</thought>', '', text, flags=re.DOTALL)
+        # 3. Remove inline JSON ONLY if it looks like the specific report structure (Dotall)
+        text = re.sub(r'\{\s*"what"\s*:.*?"where"\s*:.*?"when"\s*:.*?"who"\s*:.*?"evidence"\s*:.*?\}', '', text, flags=re.DOTALL)
         return re.sub(r'\n{3,}', '\n\n', text).strip()
     
     @staticmethod
