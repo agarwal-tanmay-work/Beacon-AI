@@ -4,7 +4,7 @@ import structlog
 from typing import Optional, Dict, Any, Type, TypeVar, List
 from pydantic import BaseModel
 from app.core.config import settings
-from app.schemas.ai import AIAnalysisResult, AICredibilityScore
+from app.schemas.ai import AIAnalysisResult, CredibilityFeatures
 import base64
 
 logger = structlog.get_logger()
@@ -101,21 +101,65 @@ class GroqService:
         return await cls._call_groq(messages, AIAnalysisResult)
 
     @classmethod
-    async def calculate_credibility(cls, report_text: str, metadata: Dict[str, Any]) -> AICredibilityScore:
-        messages = [{
-            "role": "user",
-            "content": (
-                "Assess the credibility of this report based on detail richness, internal consistency, "
-                "and provided metadata. Return a score 0-100 where 100 is highly detailed and consistent. "
-                "Provide reasoning.\n\n"
-                f"Report: {report_text}\n"
-                f"Metadata: {json.dumps(metadata)}"
-            )
-        }]
-        result = await cls._call_groq(messages, AICredibilityScore)
-        if not result:
-            return AICredibilityScore(score=0, reasoning="AI Service Unavailable")
-        return result
+    async def extract_credibility_features(
+        cls, 
+        chat_history: List[Dict[str, str]], 
+        evidence_summary: str, 
+        metadata: Dict[str, Any]
+    ) -> Optional[CredibilityFeatures]:
+        
+        role_definition = """
+You are an expert Intelligence Analyst for Beacon AI.
+Your task is to EXTRACT structured features from corruption reports to enable downstream credibility scoring.
+
+DO NOT CALCULATE A SCORE.
+Instead, assess the following dimensions objectively:
+
+1. Information Completeness:
+   - Identify if key W-questions (What, Where, When, How, Who) are present.
+   - Classify overall clarity (Vague vs Specific).
+
+2. Consistency:
+   - Check for contradictions or incoherence.
+   - Classify the flow (Contradictory -> Fully Coherent).
+
+3. Evidence Quality (Assessment):
+   - Assess the description of evidence provided (if any).
+   - Is it relevant? Strong/Direct? Or Weak?
+   - Suspect tampering?
+
+4. Tone:
+   - Classify tone (Aggressive, Emotional, or Calm/Factual).
+
+5. Temporal Extraction:
+   - Extract the specific Incident Date if mentioned (ISO format YYYY-MM-DD).
+
+6. Malicious Check:
+   - Flag potential Spam, Vendetta, or Fake indicators.
+
+7. User Cooperation:
+   - Assess if the user answered follow-up questions cooperatively.
+
+OUTPUT format: Strict JSON matching the provided schema.
+"""
+
+        conversation_text = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in chat_history])
+        
+        messages = [
+            {"role": "system", "content": role_definition},
+            {
+                "role": "user", 
+                "content": (
+                    "Extract credibility features from this report:\n\n"
+                    f"Conversation Log:\n{conversation_text}\n\n"
+                    f"Evidence Analysis Summary:\n{evidence_summary}\n\n"
+                    f"Metadata:\n{json.dumps(metadata, default=str)}"
+                )
+            }
+        ]
+        
+        return await cls._call_groq(messages, CredibilityFeatures)
+
 
     @classmethod
     async def translate_to_english(cls, text: str) -> str:

@@ -24,3 +24,5 @@ class MessageResponse(BaseModel):
     content: str
     timestamp: datetime
     next_step: Optional[str] = None
+    case_id: Optional[str] = None  # BCN + 12 digits, present when submitted
+

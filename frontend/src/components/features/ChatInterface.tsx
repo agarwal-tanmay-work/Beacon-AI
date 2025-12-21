@@ -27,18 +27,104 @@ export function ChatInterface() {
 
     // No auto-init on mount to prevent premature errors
 
+    const [totalUploadSize, setTotalUploadSize] = useState(0);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Derived state for locking
+    const isLocked = currentStep === "SUBMITTED";
+
     // Auto-scroll
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
 
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files || !e.target.files[0]) return;
+        const file = e.target.files[0];
+        const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+
+        // Client-side validation
+        if (totalUploadSize + file.size > MAX_SIZE) {
+            setMessages(prev => [...prev, {
+                id: crypto.randomUUID(),
+                sender: "SYSTEM",
+                content: `⚠️ Upload Rejected: Total file size limit (5MB) exceeded. Please upload a smaller file.`,
+                timestamp: new Date().toISOString()
+            }]);
+            return;
+        }
+
+        let currentReportId = reportId;
+        let currentAccessToken = accessToken;
+
+        // Auto-initialize session if needed
+        if (!currentReportId || !currentAccessToken) {
+            try {
+                const seed = Math.random().toString(36).substring(7);
+                const initRes = await api.post("/public/reports/create", { client_seed: seed });
+                currentReportId = initRes.data.report_id;
+                currentAccessToken = initRes.data.access_token;
+
+                setReportId(currentReportId);
+                setAccessToken(currentAccessToken);
+            } catch (err) {
+                console.error("Session init failed", err);
+                setMessages(prev => [...prev, {
+                    id: crypto.randomUUID(),
+                    sender: "SYSTEM",
+                    content: `❌ Connection Error: Could not establish secure session.`,
+                    timestamp: new Date().toISOString()
+                }]);
+                return;
+            }
+        }
+
+        if (!currentReportId || !currentAccessToken) {
+            console.error("Missing credentials after init attempt");
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("report_id", currentReportId);
+        formData.append("access_token", currentAccessToken);
+
+        formData.append("file", file);
+
+        try {
+            setLoading(true);
+            const res = await api.post("/public/evidence/upload", formData, {
+                headers: { "Content-Type": "multipart/form-data" }
+            });
+
+            setTotalUploadSize(prev => prev + file.size);
+            setMessages(prev => [...prev, {
+                id: crypto.randomUUID(),
+                sender: "SYSTEM",
+                content: `✅ Evidence Uploaded: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`,
+                timestamp: new Date().toISOString()
+            }]);
+
+        } catch (err) {
+            console.error("Upload failed", err);
+            setMessages(prev => [...prev, {
+                id: crypto.randomUUID(),
+                sender: "SYSTEM",
+                content: `❌ Upload Failed: ${(err as any).response?.data?.detail || "Server Error"}`,
+                timestamp: new Date().toISOString()
+            }]);
+        } finally {
+            setLoading(false);
+            if (fileInputRef.current) fileInputRef.current.value = ""; // Reset input
+        }
+    };
+
     const sendMessage = async () => {
-        if (!input.trim()) return;
+        if (!input.trim() || isLocked) return;
 
         const userMsg: Message = {
             id: crypto.randomUUID(),
             sender: "USER",
-            content: input,
+            content: input.trim(),
             timestamp: new Date().toISOString(),
         };
 
@@ -110,8 +196,10 @@ export function ChatInterface() {
                     <div>
                         <h2 className="text-white font-semibold tracking-wide text-sm">SECURE CONNECTION</h2>
                         <div className="flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                            <span className="text-[10px] text-emerald-500/80 font-mono tracking-wider">ENCRYPTED</span>
+                            <span className={`w-1.5 h-1.5 rounded-full ${isLocked ? "bg-red-500" : "bg-emerald-500 animate-pulse"}`} />
+                            <span className={`text-[10px] font-mono tracking-wider ${isLocked ? "text-red-500/80" : "text-emerald-500/80"}`}>
+                                {isLocked ? "SESSION LOCKED" : "ENCRYPTED"}
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -177,34 +265,48 @@ export function ChatInterface() {
 
             {/* Input Area */}
             <div className="p-5 bg-black/40 border-t border-white/5 backdrop-blur-xl">
-                <div className="relative flex items-center gap-3">
+                <div className="relative flex items-end gap-3">
                     {/* Evidence Upload Trigger */}
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        className="hidden"
+                        onChange={handleFileUpload}
+                        accept="image/*,application/pdf,video/*"
+                    />
+
                     <AnimatePresence>
-                        {currentStep === "EVIDENCE_OPTION" && (
+                        {/* Always show upload option unless locked */}
+                        {!isLocked && (
                             <motion.button
                                 initial={{ width: 0, opacity: 0 }}
                                 animate={{ width: "auto", opacity: 1 }}
                                 exit={{ width: 0, opacity: 0 }}
-                                className="p-3.5 glass-button rounded-2xl text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 hover:border-purple-500/20"
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={isLocked || loading}
+                                className="p-3.5 mb-1 glass-button rounded-2xl text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 hover:border-purple-500/20 disabled:opacity-50"
+                                title="Upload Evidence (Max 5MB)"
                             >
                                 <Upload className="w-5 h-5" />
                             </motion.button>
                         )}
                     </AnimatePresence>
 
-                    <input
+                    <textarea
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={handleKeyPress}
-                        placeholder="Type your message securely..."
-                        className="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/10 border border-white/5 focus:border-white/10 rounded-2xl p-4 pr-14 text-white placeholder:text-white/20 transition-all outline-none"
-                        autoFocus
+                        disabled={isLocked}
+                        placeholder={isLocked ? "Case Report Submitted. Session Locked." : "Type your message securely... (Shift+Enter for new line)"}
+                        className="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/10 border border-white/5 focus:border-white/10 rounded-2xl p-4 pr-14 text-white placeholder:text-white/20 transition-all outline-none resize-none min-h-[56px] max-h-[150px] scrollbar-hide"
+                        rows={1}
+                        style={{ height: "auto" }} // Simplistic auto-grow can be improved if needed
                     />
 
                     <button
                         onClick={sendMessage}
-                        disabled={loading || !input.trim()}
-                        className="absolute right-2 p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all disabled:opacity-0 disabled:scale-90"
+                        disabled={loading || !input.trim() || isLocked}
+                        className="absolute right-2 bottom-2 p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all disabled:opacity-0 disabled:scale-90"
                     >
                         <Send className="w-4 h-4" />
                     </button>

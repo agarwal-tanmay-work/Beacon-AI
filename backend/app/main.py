@@ -21,8 +21,14 @@ logger = structlog.get_logger()
 async def lifespan(app: FastAPI):
     """
     Lifecycle manager for the application.
+    Initializes local SQLite database for staging data.
     """
     logger.info("startup", project=settings.PROJECT_NAME)
+    
+    # Initialize local SQLite database for staging
+    from app.db.local_db import init_local_db
+    await init_local_db()
+    
     yield
     logger.info("shutdown")
 

@@ -1,0 +1,45 @@
+Created local session 0e3c2849-f788-4f24-b33b-ffe649560892
+Triggering mock submission for 0e3c2849-f788-4f24-b33b-ffe649560892...
+2025-12-21 18:58:19,638 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2025-12-21 18:58:19,638 INFO sqlalchemy.engine.Engine [raw sql] ()
+2025-12-21 18:58:19,762 INFO sqlalchemy.engine.Engine select current_schema()
+2025-12-21 18:58:19,763 INFO sqlalchemy.engine.Engine [raw sql] ()
+2025-12-21 18:58:19,985 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2025-12-21 18:58:19,985 INFO sqlalchemy.engine.Engine [raw sql] ()
+2025-12-21 18:58:20,146 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-12-21 18:58:20,157 INFO sqlalchemy.engine.Engine SELECT beacon.id, beacon.reported_at, beacon.case_id, beacon.incident_summary, beacon.credibility_score, beacon.score_explanation, beacon.evidence_files, beacon.created_at, beacon.updated_at 
+FROM beacon 
+WHERE beacon.case_id = $1::VARCHAR
+2025-12-21 18:58:20,157 INFO sqlalchemy.engine.Engine [generated in 0.00021s] ('BCN920257492339',)
+2025-12-21 18:58:20,392 INFO sqlalchemy.engine.Engine INSERT INTO beacon (id, reported_at, case_id, incident_summary, credibility_score, score_explanation, evidence_files, created_at, updated_at) VALUES ($1::UUID, $2::TIMESTAMP WITH TIME ZONE, $3::VARCHAR, $4::VARCHAR, $5::INTEGER, $6::VARCHAR, $7::JSON, $8::TIMESTAMP WITH TIME ZONE, $9::TIMESTAMP WITH TIME ZONE)
+2025-12-21 18:58:20,392 INFO sqlalchemy.engine.Engine [generated in 0.00028s] (UUID('f616a697-dda1-444a-a9e8-eabaaab625a2'), datetime.datetime(2025, 12, 21, 13, 28, 19, 175561), 'BCN920257492339', None, None, None, '[]', datetime.datetime(2025, 12, 21, 13, 28, 20, 392727), datetime.datetime(2025, 12, 21, 13, 28, 20, 392731))
+2025-12-21 18:58:20,474 INFO sqlalchemy.engine.Engine COMMIT
+[REPORT_ENGINE] Created beacon entry with case_id: BCN920257492339
+Response Case ID: BCN920257492339
+Verifying Supabase record...
+2025-12-21 18:58:20,973 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-12-21 18:58:20,974 INFO sqlalchemy.engine.Engine SELECT beacon.id, beacon.reported_at, beacon.case_id, beacon.incident_summary, beacon.credibility_score, beacon.score_explanation, beacon.evidence_files, beacon.created_at, beacon.updated_at 
+FROM beacon 
+WHERE beacon.case_id = $1::VARCHAR
+2025-12-21 18:58:20,974 INFO sqlalchemy.engine.Engine [cached since 0.8176s ago] ('BCN920257492339',)
+2025-12-21 18:58:21,122 INFO sqlalchemy.engine.Engine ROLLBACK
+Traceback (most recent call last):
+  File "C:\Users\priya\OneDrive\Desktop\Antigravity v5 copy 4\backend\test_supabase_storage.py", line 76, in <module>
+    asyncio.run(test_force_submission())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\priya\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\priya\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\priya\AppData\Local\Programs\Python\Python313\Lib\asyncio\base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "C:\Users\priya\OneDrive\Desktop\Antigravity v5 copy 4\backend\test_supabase_storage.py", line 69, in test_force_submission
+    print(f"\u2705 FOUND in Supabase Beacon table!")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\priya\AppData\Local\Programs\Python\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2705' in position 0: character maps to <undefined>

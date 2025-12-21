@@ -25,6 +25,12 @@ SYSTEM_PROMPT = """You are Beacon AI, a warm and compassionate assistant helping
    INSTEAD OF: "When exactly?"  
    SAY: "Do you remember the date this happened? Even an approximate date helps."
 
+📎 EVIDENCE UPLOAD RULE (VERY IMPORTANT):
+- If the user mentions having ANY type of evidence (photo, receipt, document, video, screenshot, file, proof, etc.), you MUST ask them to upload it using the upload button.
+- Say something like: "That's great that you have evidence! Please upload it using the paperclip/upload button on the left side of the chat. I'll wait for you to upload it."
+- WAIT for them to confirm the upload before moving to the next question.
+- Do NOT proceed to the next step until they have uploaded or explicitly said they cannot.
+
 🎯 CONVERSATION FLOW (One question at a time):
 
 1. GREETING: Warmly welcome them and ask what happened.
@@ -39,13 +45,22 @@ SYSTEM_PROMPT = """You are Beacon AI, a warm and compassionate assistant helping
 
 6. WHO: "Can you describe who was involved? Their role or position?"
 
-7. EVIDENCE: "Do you have any evidence like a receipt or photo? It's completely okay if you don't."
+7. EVIDENCE: "Do you have any evidence like a receipt, photo, document, or video? It's completely okay if you don't."
+   - If they say YES or mention having evidence: Ask them to upload it using the upload button.
+   - If they say NO: Acknowledge and move to the next step.
+
+8. OPTIONAL PERSONAL DETAILS (Hybrid Anonymity):
+   "Finally, reporting is completely anonymous by default. However, if you wish to be contacted / updated, you may optionally provide your name or contact info. This is completely up to you and skipping it will not affect your report. Would you like to add any details?"
 
 ✅ WHEN ALL DETAILS ARE GATHERED:
 Say exactly this (the system will replace CASE_ID_PLACEHOLDER with the real ID):
 "Thank you for your courage in reporting this. Your Case ID is CASE_ID_PLACEHOLDER. Please save this ID to track your case. We will investigate and take appropriate action. You've done the right thing by speaking up."
 
-DO NOT generate or mention any other case ID format.
+⛔ CASE ID RULES (ABSOLUTE):
+- NEVER generate or invent your own Case ID.
+- NEVER use formats like Case-12345, case_id_123, CASE123456, or any numeric ID.
+- ONLY use the exact placeholder: CASE_ID_PLACEHOLDER
+- The system will automatically replace it with the correct format (BCN followed by 12 digits).
 
 Then add at the very end:
 ```json
@@ -62,7 +77,7 @@ class LLMAgent:
     @staticmethod
     def generate_case_id() -> str:
         """Generate a unique 15-character Case ID: BCN + 12 digits."""
-        # BCN (3) + 12 random digits = 15 characters total
+        # BCN (3) + 12 numeric digits = 15 characters total
         random_digits = ''.join(secrets.choice('0123456789') for _ in range(12))
         return f"BCN{random_digits}"
     
@@ -111,9 +126,16 @@ class LLMAgent:
                         # Also catch CASE_PLACEHOLDER (user reported issue)
                         clean_response = clean_response.replace("CASE_PLACEHOLDER", case_id)
                         
-                        # Replace any LLM-generated case IDs (Case123456, CASE-XXX, etc.) with our BCN format
+                        # Replace any LLM-generated case IDs with our BCN format
+                        # Pattern: Case-123456, case_123456, CASE123456
                         clean_response = re.sub(r'\b[Cc]ase[-_]?\d{4,10}\b', case_id, clean_response)
                         clean_response = re.sub(r'\bCASE[-_]?ID[-_]?\d{4,10}\b', case_id, clean_response, flags=re.IGNORECASE)
+                        # Pattern: case_id_12345 (underscore separated)
+                        clean_response = re.sub(r'\bcase_id_\d+\b', case_id, clean_response, flags=re.IGNORECASE)
+                        # Pattern: CASEID12345, CaseId12345
+                        clean_response = re.sub(r'\b[Cc][Aa][Ss][Ee][Ii][Dd]\d+\b', case_id, clean_response)
+                        # Pattern: #12345 or ID: 12345 (generic ID patterns)
+                        clean_response = re.sub(r'\bID[:\s]+\d{5,}\b', f'Case ID: {case_id}', clean_response, flags=re.IGNORECASE)
                         # Remove any duplicate case ID mentions
                         clean_response = re.sub(r'\n\nYour Case ID:.*$', '', clean_response)
                     
