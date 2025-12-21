@@ -181,8 +181,7 @@ class ReportEngine:
                         analysis_attempts=0,
                         # AI Fields - Explicitly NULL
                         incident_summary=None,
-                        credibility_score=None,
-                        score_explanation=None
+                        credibility_score=None
                     )
                     supabase_session.add(beacon_row)
                     

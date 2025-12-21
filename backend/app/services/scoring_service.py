@@ -107,22 +107,40 @@ class ScoringService:
             logger.warning("analysis_aborted_scoring_failed")
             return None
             
-        score = score_data.get("score")
-        explanation = score_data.get("explanation")
+        score = score_data.get("credibility_score")
+        breakdown = score_data.get("breakdown")
+        auth_summary = score_data.get("authority_summary")
+        
+        # Strict validation of all dimension keys
+        required_keys = [
+            "information_completeness", "internal_consistency", "evidence_quality",
+            "language_tone", "temporal_proximity", "corroboration_patterns",
+            "user_cooperation", "malicious_penalty"
+        ]
+        if not breakdown or not all(k in breakdown for k in required_keys):
+            logger.error("analysis_aborted_malformed_breakdown", breakdown=breakdown)
+            return None
+
+        # Log individual dimensions
+        logger.info("scoring_dimensions_calculated", 
+                    case_id="...", # Note: case_id not in this scope directly but logged at caller level
+                    score=score, 
+                    **breakdown)
         
         # Strict constraints
         if score is None or not (1 <= score <= 100):
             logger.warning("analysis_aborted_invalid_score", score=score)
             return None
             
-        if not explanation or len(explanation) < 10:
-             logger.warning("analysis_aborted_invalid_explanation")
+        if not auth_summary or len(auth_summary) < 10:
+             logger.warning("analysis_aborted_invalid_authority_summary")
              return None
 
         return {
             "incident_summary": summary,
             "credibility_score": score,
-            "score_explanation": explanation
+            "credibility_breakdown": breakdown,
+            "authority_summary": auth_summary
         }
 
     @staticmethod
@@ -136,7 +154,7 @@ class ScoringService:
             "[insert", "[add summary", "placeholder summary"
         ]
         
-        combined = (str(data.get("incident_summary")) + str(data.get("score_explanation"))).lower()
+        combined = (str(data.get("incident_summary")) + str(data.get("authority_summary"))).lower()
         
         for term in forbidden:
             if term in combined:
@@ -153,7 +171,8 @@ class ScoringService:
             .values(
                 incident_summary=results["incident_summary"],
                 credibility_score=results["credibility_score"],
-                score_explanation=results["score_explanation"],
+                credibility_breakdown=results["credibility_breakdown"],
+                authority_summary=results["authority_summary"],
                 analysis_status="completed",
                 analysis_last_error=None # Clear previous errors
             )

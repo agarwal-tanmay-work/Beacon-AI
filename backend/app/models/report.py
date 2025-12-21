@@ -38,7 +38,8 @@ class Report(Base):
     status = Column(Enum(ReportStatus), default=ReportStatus.NEW, nullable=False, index=True)
     priority = Column(Enum(ReportPriority), default=ReportPriority.LOW, nullable=False, index=True)
     credibility_score = Column(Integer, nullable=True)
-    score_explanation = Column(Text, nullable=True)
+    credibility_breakdown = Column(JSON, nullable=True) # Full 8-dimension breakdown
+    authority_summary = Column(Text, nullable=True)
     
     categories = Column(JSON, default=list)
     location_meta = Column(JSON, nullable=True)

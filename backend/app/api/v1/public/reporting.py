@@ -165,7 +165,7 @@ async def get_case_info(case_id: str, db: AsyncSession = Depends(get_db)):
         "reported_at": beacon.reported_at.isoformat() if beacon.reported_at else None,
         "incident_summary": beacon.incident_summary,
         "credibility_score": beacon.credibility_score,
-        "score_explanation": beacon.score_explanation,
+        "authority_summary": beacon.authority_summary,
         "evidence_count": len(beacon.evidence_files) if beacon.evidence_files else 0,
         "created_at": beacon.created_at.isoformat() if beacon.created_at else None,
         "updated_at": beacon.updated_at.isoformat() if beacon.updated_at else None

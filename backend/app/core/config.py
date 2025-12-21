@@ -24,17 +24,17 @@ class Settings(BaseSettings):
             return v
         raise ValueError(v)
 
-    # Database - defaults to Supabase, override via env for local dev
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:TanmayAg@db.myvmzqrkitrqxummzhjw.supabase.co:5432/postgres"
+    # Database - should be provided via DATABASE_URL env var
+    DATABASE_URL: str
     
     # Supabase Storage & Client
     SUPABASE_URL: str = "https://myvmzqrkitrqxummzhjw.supabase.co"
-    SUPABASE_KEY: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15dm16cXJraXRycXh1bW16aGp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NjIzNDUwNiwiZXhwIjoyMDgxODEwNTA2fQ.g_Ky1-tZO-eZVMxoTg7hOlFuyaxGDKoHw_uNtJAoz5M"
+    SUPABASE_KEY: str
 
     # AI
     # AI
     GEMINI_API_KEY: str = ""
-    GROQ_API_KEY: str = ""  # Set via environment variable or backend_config.env
+    GROQ_API_KEY: str
     # IMPORTANT: Ensure this is set in backend_config.env or replaced here
 
     # Logging

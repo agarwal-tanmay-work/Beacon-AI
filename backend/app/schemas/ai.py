@@ -71,3 +71,18 @@ class CredibilityFeatures(BaseModel):
     user_responsiveness: str = Field(..., description="Assessment of user cooperation: 'EVASIVE', 'ADEQUATE', 'COOPERATIVE'")
 
     summary_narrative: str
+
+class ScoringBreakdown(BaseModel):
+    information_completeness: int = Field(..., ge=0, le=20)
+    internal_consistency: int = Field(..., ge=0, le=15)
+    evidence_quality: int = Field(..., ge=0, le=25)
+    language_tone: int = Field(..., ge=0, le=10)
+    temporal_proximity: int = Field(..., ge=0, le=10)
+    corroboration_patterns: int = Field(..., ge=0, le=10)
+    user_cooperation: int = Field(..., ge=0, le=5)
+    malicious_penalty: int = Field(..., ge=-15, le=0)
+
+class ScoringResult(BaseModel):
+    credibility_score: int = Field(..., ge=1, le=100)
+    breakdown: ScoringBreakdown
+    authority_summary: str = Field(..., description="Neutral, factual internal justification")

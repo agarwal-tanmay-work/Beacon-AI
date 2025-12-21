@@ -4,7 +4,7 @@ import structlog
 from typing import Optional, Dict, Any, Type, TypeVar, List
 from pydantic import BaseModel
 from app.core.config import settings
-from app.schemas.ai import AIAnalysisResult, CredibilityFeatures
+from app.schemas.ai import AIAnalysisResult, CredibilityFeatures, ScoringResult
 import base64
 
 logger = structlog.get_logger()
@@ -226,39 +226,90 @@ OUTPUT format: Strict JSON matching the provided schema.
         chat_history: List[Dict[str, str]], 
         evidence_summary: str, 
         metadata: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
         """
-        Calculates credibility score and explanation using the User's strict rubric.
+        Calculates credibility score and explanation using the User's strict 1-100 rubric.
+        Dimensions:
+        1. information_completeness (0–20)
+        2. internal_consistency (0–15)
+        3. evidence_quality (0–25)
+        4. language_tone (0–10)
+        5. temporal_proximity (0–10)
+        6. corroboration_patterns (0–10)
+        7. user_cooperation (0–5)
+        8. malicious_penalty (−15 to 0)
         """
-        
-        class ScoringResult(BaseModel):
-            score: int
-            explanation: str
-            breakdown: Dict[str, int]
         
         conversation_text = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in chat_history])
         
-        rubric_prompt = """
-Design a credibility scoring engine for Beacon AI that assigns each corruption report an explainable score from 1 to 100 based strictly on user-provided information only.
-The score must consider completeness of details (what, where, when, how), internal consistency of the narrative, quality and relevance of any uploaded evidence (images, documents, videos, audio, OCR and tamper signals), tone and language sincerity, time gap between incident and reporting, similarity or corroboration with past anonymized reports, and the user’s responsiveness to follow-up questions. Apply negative penalties for indicators of spam, fabrication, defamation, automation, or manipulated evidence, but never penalize anonymity or lack of evidence alone. Do not infer, assume, or add facts. The score must reflect reliability and actionability, not legal truth or guilt, and must include a concise neutral justification suitable for authority review while respecting privacy, ethics, and non-bias principles.
+        role_definition = """
+You are an expert AI credibility assessment engine for Beacon AI, a government-grade, privacy-first corruption reporting chatbot.
+Your task is to generate a credibility score between 1 and 100 for a corruption report.
 
-OUTPUT JSON FORMAT:
-{
-    "score": <integer 1-100>,
-    "explanation": "<concise neutral justification>",
-    "breakdown": {
-        "completeness": <score>,
-        "consistency": <score>,
-        "evidence": <score>,
-        "tone": <score>,
-        "temporal": <score>,
-        "penalties": <negative_score>
-    }
-}
+STRICT RULES:
+1. Use ONLY the provided information (chat history, evidence summary, metadata).
+2. Do NOT invent, assume, infer, or add any facts.
+3. Do NOT penalize a user for anonymity.
+4. Do NOT use political, personal, caste, religion, gender, or ideology bias.
+5. The score must be explainable, structured, and defensible.
+6. Higher score = higher reliability and actionability, NOT guilt or legal truth.
+7. Do NOT make legal judgments.
+8. Score reflects reliability/actionability, not verdict.
+
+SCORING FRAMEWORK:
+1. INFORMATION COMPLETENESS (0–20):
+   - 0–5: Extremely vague, missing most elements
+   - 6–10: Some details present, major gaps
+   - 11–15: Most details present, minor gaps
+   - 16–20: Clear, specific, structured description
+
+2. INTERNAL CONSISTENCY & LOGICAL FLOW (0–15):
+   - 0–5: Contradictory or incoherent
+   - 6–10: Mostly consistent with minor ambiguity
+   - 11–15: Fully coherent and stable
+
+3. EVIDENCE PRESENCE & QUALITY (0–25):
+   - 0: No evidence provided
+   - 1–8: Weak or unclear evidence
+   - 9–17: Relevant but partial or indirect evidence
+   - 18–25: Strong, direct, high-quality supporting evidence
+   (Absence of evidence != false report)
+
+4. LANGUAGE & TONE ANALYSIS (0–10):
+   - 0–3: Highly aggressive, incoherent, or sensational
+   - 4–7: Emotionally charged but understandable
+   - 8–10: Calm, factual, sincere
+
+5. TEMPORAL PROXIMITY (0–10):
+   - 0–3: Very old with vague timing
+   - 4–7: Moderate delay but clear timeline
+   - 8–10: Very recent and well-timestamped
+
+6. CORROBORATION & PATTERN MATCHING (0–10):
+   - 0–3: No overlap or unique case
+   - 4–7: Partial similarity with past reports
+   - 8–10: Strong pattern match with multiple reports
+
+7. USER COOPERATION & RESPONSIVENESS (0–5):
+   - 0–2: Avoids questions or provides evasive answers
+   - 3–4: Answers most questions adequately
+   - 5: Fully cooperative and responsive
+
+8. MALICIOUS / SPAM / DEFAMATION CHECK (-15 to 0):
+   - 0: No malicious indicators
+   - -5: Mild concern
+   - -10: Strong concern
+   - -15: Severe credibility risk
+   (Flags: personal vendetta, unsupported accusations, copy-paste, fake evidence, bot behavior)
+
+FINAL SCORE CALCULATION:
+- Sum all positive dimensions (1-7)
+- Subtract penalties (8)
+- Clamp final result strictly between 1 and 100. Never return 0.
 """
 
         messages = [
-            {"role": "system", "content": rubric_prompt},
+            {"role": "system", "content": role_definition},
             {
                 "role": "user", 
                 "content": (
@@ -272,8 +323,11 @@ OUTPUT JSON FORMAT:
         
         result = await cls._call_groq(messages, ScoringResult)
         if result:
-            return result.model_dump()
+            # Manual Clamp check just in case Llama messed up the math
+            res_dict = result.model_dump()
+            score = res_dict["credibility_score"]
+            res_dict["credibility_score"] = max(1, min(100, score))
+            return res_dict
             
-        # Strict Mode: Return None on failure. No defaults.
         return None
 
