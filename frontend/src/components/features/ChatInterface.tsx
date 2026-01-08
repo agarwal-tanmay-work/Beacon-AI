@@ -41,6 +41,9 @@ export function ChatInterface() {
     const [totalUploadSize, setTotalUploadSize] = useState(0);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    const [secretKey, setSecretKey] = useState<string | null>(null);
+    const [finalCaseId, setFinalCaseId] = useState<string | null>(null);
+
     // Derived state for locking
     const isLocked = currentStep === "SUBMITTED";
 
@@ -174,15 +177,20 @@ export function ChatInterface() {
 
             setMessages((prev) => [...prev, sysMsg]);
 
-            // ONLY lock the chat if the response contains a real Case ID (BCN + digits)
-            // This prevents premature locking if the backend fails to generate the ID
-            const hasCaseId = /BCN\d{12}/.test(res.data.content);
+            // Handle Submission & Lockdown
+            const resCaseId = res.data.case_id; // Backend now returns case_id separately
+            const resSecretKey = res.data.secret_key; // Backend returns secret_key once
+
+            // Fallback to regex if case_id not explicitly sent (backward compat)
+            const hasCaseId = resCaseId || /BCN\d{12}/.test(res.data.content);
+
             if (res.data.next_step === "SUBMITTED" && hasCaseId) {
                 setCurrentStep("SUBMITTED");
+                if (resCaseId) setFinalCaseId(resCaseId);
+                if (resSecretKey) setSecretKey(resSecretKey);
             } else if (res.data.next_step && res.data.next_step !== "SUBMITTED") {
                 setCurrentStep(res.data.next_step);
             }
-            // If next_step is SUBMITTED but no Case ID, don't lock yet
 
         } catch (err: unknown) {
             console.error("Send Failed", err);
@@ -207,6 +215,69 @@ export function ChatInterface() {
 
     return (
         <div className="w-full max-w-4xl h-[85vh] flex flex-col glass-panel rounded-3xl overflow-hidden relative shadow-2xl border border-white/5">
+            {/* SUCCESS OVERLAY */}
+            <AnimatePresence>
+                {isLocked && secretKey && (
+                    <motion.div
+                        initial={{ opacity: 0, backdropFilter: "blur(0px)" }}
+                        animate={{ opacity: 1, backdropFilter: "blur(20px)" }}
+                        transition={{ duration: 0.8 }}
+                        className="absolute inset-0 z-50 flex flex-col items-center justify-center p-8 bg-black/80"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, y: 20 }}
+                            animate={{ scale: 1, y: 0 }}
+                            transition={{ delay: 0.2, type: "spring" }}
+                            className="w-full max-w-lg bg-black/90 border border-emerald-500/30 rounded-3xl p-8 shadow-2xl relative overflow-hidden"
+                        >
+                            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent" />
+
+                            <div className="text-center mb-8">
+                                <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-emerald-500/20">
+                                    <ShieldCheck className="w-8 h-8 text-emerald-400" />
+                                </div>
+                                <h1 className="text-2xl font-bold text-white mb-2">Report Securely Filed</h1>
+                                <p className="text-white/40 text-sm">Your case has been encrypted and submitted to the grid.</p>
+                            </div>
+
+                            <div className="space-y-6">
+                                <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                                    <p className="text-xs text-white/40 uppercase tracking-wider mb-2">Case ID</p>
+                                    <div className="font-mono text-xl text-emerald-400 tracking-widest">{finalCaseId || "PENDING"}</div>
+                                </div>
+
+                                <div className="bg-emerald-900/10 border border-emerald-500/20 rounded-xl p-4 relative group">
+                                    <div className="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <div className="text-[10px] text-emerald-500 bg-emerald-900/50 px-2 py-1 rounded">CLICK TO COPY</div>
+                                    </div>
+                                    <p className="text-xs text-emerald-400/60 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                        Secret Access Key
+                                        <Lock className="w-3 h-3" />
+                                    </p>
+                                    <div
+                                        onClick={() => navigator.clipboard.writeText(`Case ID: ${finalCaseId}\nSecret Key: ${secretKey}`)}
+                                        className="font-mono text-2xl text-white font-bold tracking-widest cursor-pointer hover:text-emerald-200 transition-colors break-words"
+                                    >
+                                        {secretKey}
+                                    </div>
+                                </div>
+
+                                <div className="flex bg-red-500/10 border border-red-500/20 p-4 rounded-xl items-start gap-3">
+                                    <div className="mt-1 w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                                    <p className="text-xs text-red-200/80 leading-relaxed">
+                                        <strong>IMPORTANT:</strong> Save this Secret Key immediately. It is shown only once. You need it to track your case status. We cannot recover it if lost.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="mt-8 text-center text-[10px] text-white/20 font-mono">
+                                SESSION TERMINATED • LOGS WIPED
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             {/* Header */}
             <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-black/40 backdrop-blur-md">
                 <div className="flex items-center gap-3">

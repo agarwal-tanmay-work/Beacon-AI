@@ -150,7 +150,11 @@ export default function Dashboard() {
               </thead>
               <tbody className="divide-y divide-border">
                 {reports.map((report) => (
-                  <tr key={report.id} className="hover:bg-white/5 transition-colors">
+                  <tr
+                    key={report.id}
+                    className="hover:bg-white/5 transition-colors cursor-pointer"
+                    onClick={() => router.push(`/case/${report.id}`)}
+                  >
                     <td className="px-6 py-4 font-mono text-white">
                       {/* Mock Case ID since schema is UUID primary, but usually we display case_id (BCN-...) */}
                       {report.id.substring(0, 8).toUpperCase()}...

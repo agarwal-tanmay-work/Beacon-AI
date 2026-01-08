@@ -1,0 +1,25 @@
+2025-12-22 02:48:24,956 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2025-12-22 02:48:24,956 INFO sqlalchemy.engine.Engine [raw sql] ()
+2025-12-22 02:48:25,095 INFO sqlalchemy.engine.Engine select current_schema()
+2025-12-22 02:48:25,095 INFO sqlalchemy.engine.Engine [raw sql] ()
+2025-12-22 02:48:25,260 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2025-12-22 02:48:25,260 INFO sqlalchemy.engine.Engine [raw sql] ()
+2025-12-22 02:48:25,418 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-12-22 02:48:25,428 INFO sqlalchemy.engine.Engine SELECT beacon.id, beacon.reported_at, beacon.case_id, beacon.incident_summary, beacon.credibility_score, beacon.score_explanation, beacon.evidence_files, beacon.created_at, beacon.updated_at, beacon.analysis_status, beacon.analysis_attempts, beacon.analysis_last_error 
+FROM beacon ORDER BY beacon.created_at DESC 
+ LIMIT $1::INTEGER
+2025-12-22 02:48:25,428 INFO sqlalchemy.engine.Engine [generated in 0.00027s] (1,)
+Re-triggering scoring for Case: BCN956513011987, Session: 6ea5b904-8e21-4521-b305-aeb2023a0b72
+2025-12-22 02:48:25 [info     ] phase2_analysis_started        case_id=BCN956513011987 session_id=6ea5b904-8e21-4521-b305-aeb2023a0b72
+[DEBUG] Analysis Results: {
+  "incident_summary": "The reporting party was asked for a bribe at the post office on the morning of the conversation. The perpetrator, Mr. Roy, was involved in asking for the bribe. The reporting party has a video as evidence of Mr. Roy taking the money. The incident occurred at the post office, and the reporting party reported it, receiving a Case ID of CASE_ID_PLACEHOLDER to track the case.",
+  "credibility_score": 60,
+  "score_explanation": "The report provides specific details about the incident, including the location and the person involved. However, the user claimed to have video evidence but did not provide it, which affects the credibility of the report."
+}
+2025-12-22 02:48:27 [error    ] phase2_analysis_failed         case_id=BCN956513011987 error="Strict Check Failed: Forbidden validation term 'placeholder' found in output."
+2025-12-22 02:48:27,739 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-12-22 02:48:27,742 INFO sqlalchemy.engine.Engine UPDATE beacon SET updated_at=$1::TIMESTAMP WITH TIME ZONE, analysis_attempts=(beacon.analysis_attempts + $2::INTEGER), analysis_last_error=$3::VARCHAR WHERE beacon.case_id = $4::VARCHAR
+2025-12-22 02:48:27,742 INFO sqlalchemy.engine.Engine [generated in 0.00048s] (datetime.datetime(2025, 12, 21, 21, 18, 27, 742214), 1, "Strict Check Failed: Forbidden validation term 'placeholder' found in output.", 'BCN956513011987')
+2025-12-22 02:48:27,852 INFO sqlalchemy.engine.Engine COMMIT
+Re-scoring attempt finished.
+2025-12-22 02:48:27,926 INFO sqlalchemy.engine.Engine ROLLBACK

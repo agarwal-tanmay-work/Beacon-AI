@@ -25,4 +25,23 @@ class MessageResponse(BaseModel):
     timestamp: datetime
     next_step: Optional[str] = None
     case_id: Optional[str] = None  # BCN + 12 digits, present when submitted
+    secret_key: Optional[str] = None # Present ONLY once on submission
+
+class TrackStatusRequest(BaseModel):
+    case_id: str
+    secret_key: str
+
+class TrackStatusResponse(BaseModel):
+    status: str
+    last_updated: datetime
+    public_update: Optional[str] = None
+
+class NGOUpdateRequest(BaseModel):
+    raw_update: str
+    updated_by: Optional[str] = "NGO_ADMIN"
+
+class NGOUpdateResponse(BaseModel):
+    status: str
+    public_update: str
+    timestamp: datetime
 

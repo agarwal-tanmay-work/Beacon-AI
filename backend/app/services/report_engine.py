@@ -33,6 +33,10 @@ from app.schemas.report import MessageResponse
 from app.services.llm_agent import LLMAgent
 from app.models.report import SenderType
 from uuid import UUID as UUIDType
+from passlib.context import CryptContext
+import secrets
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class ReportEngine:
@@ -176,6 +180,13 @@ class ReportEngine:
                     # PHASE 1: INTAKE (FAIL-SAFE)
                     # Store Raw Data Immediately. No AI / Scoring here.
                     # ---------------------------------------------------------
+
+                    # Generate Secret Key
+                    # Format: XXXX-XXXX-XXXX-XXXX (16 chars, high entropy)
+                    # We use secrets.token_urlsafe but formatted for readability
+                    raw_secret = secrets.token_hex(8).upper() # 16 hex chars
+                    secret_key_display = f"{raw_secret[:4]}-{raw_secret[4:8]}-{raw_secret[8:12]}-{raw_secret[12:]}"
+                    secret_key_hash = pwd_context.hash(secret_key_display)
                     
                     beacon_row = Beacon(
                         reported_at=reported_at_ist,
@@ -188,7 +199,11 @@ class ReportEngine:
                         analysis_attempts=0,
                         # AI Fields - Explicitly NULL
                         incident_summary=None,
-                        credibility_score=None
+                        credibility_score=None,
+                        # Secret Key & Status Tracking
+                        secret_key_hash=secret_key_hash,
+                        status="Received",
+                        last_updated_at=reported_at_ist
                     )
                     supabase_session.add(beacon_row)
                     
@@ -233,7 +248,8 @@ class ReportEngine:
                     content=llm_response,
                     timestamp=datetime.now(timezone.utc),
                     next_step=next_step,
-                    case_id=case_id  # Include case_id in response when submitted
+                    case_id=case_id,  # Include case_id in response when submitted
+                    secret_key=secret_key_display if case_id else None # Return ONLY ONCE
                 )
         
         except Exception as e:

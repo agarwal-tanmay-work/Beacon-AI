@@ -319,3 +319,57 @@ class LLMAgent:
     @staticmethod
     async def extract_fields(conversation_history: list) -> dict:
         return {}
+        
+    @staticmethod
+    async def rewrite_update(raw_text: str) -> str:
+        """
+        Rewrites an NGO update to be neutral, factual, and public-safe.
+        """
+        # Specific System Prompt for Updates
+        UPDATE_SYSTEM_PROMPT = """You are rewriting official case status updates for public display.
+
+Rules:
+- Use clear, neutral, factual language
+- Maximum 1-2 sentences
+- Do NOT add new information
+- Do NOT speculate or assume
+- Do NOT include names, phone numbers, emails, or locations
+- Do NOT use emotional or judgmental language"""
+
+        UPDATE_USER_PROMPT = f"""Rewrite this update clearly for a citizen:
+"{raw_text}" """
+
+        api_key = settings.GROQ_API_KEY
+        if not api_key:
+            return f"[MOCK REWRITE] {raw_text}"
+
+        messages = [
+            {"role": "system", "content": UPDATE_SYSTEM_PROMPT},
+            {"role": "user", "content": UPDATE_USER_PROMPT}
+        ]
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": "llama-3.3-70b-versatile", # Use Versatile for better logic
+            "messages": messages,
+            "temperature": 0.1, # Low temp for factual consistency
+            "max_tokens": 150
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    LLMAgent.GROQ_API_URL, json=payload, headers=headers, timeout=30.0
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return data["choices"][0]["message"]["content"].strip()
+                else:
+                    return raw_text # Fallback to raw if API fails
+        except Exception as e:
+            print(f"[LLM_AGENT] Rewrite failed: {e}")
+            return raw_text

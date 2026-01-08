@@ -40,6 +40,11 @@ class Beacon(Base):
     score_explanation = Column(Text, nullable=True)     # Added to match DB
     credibility_breakdown = Column(JSON, nullable=True) # Full 8-dimension breakdown
     authority_summary = Column(Text, nullable=True)     # Internal neutral justification
+
+    # Secret Access & Status Tracking (New)
+    secret_key_hash = Column(String, nullable=True)     # Hashed Secret Access Key
+    status = Column(String, default="Received", nullable=False) # Public Status
+    last_updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
     # Evidence (Base64 encoded files in JSONB)
     # Format: [{"file_name": "...", "mime_type": "...", "size_bytes": N, "content_base64": "..."}]

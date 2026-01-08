@@ -74,13 +74,15 @@ async def health_check():
     return {"status": "ok", "environment": settings.ENVIRONMENT}
 
 
-from app.api.v1.public import reporting as public_reporting, evidence as public_evidence
-from app.api.v1.admin import auth as admin_auth, reports as admin_reports, evidence as admin_evidence
+from app.api.v1.public import reporting as public_reporting, evidence as public_evidence, tracking as public_tracking
+from app.api.v1.admin import auth as admin_auth, reports as admin_reports, evidence as admin_evidence, updates as admin_updates
 
 app.include_router(public_reporting.router, prefix=f"{settings.API_V1_STR}/public/reports", tags=["reporting"])
+app.include_router(public_tracking.router, prefix=f"{settings.API_V1_STR}/public", tags=["tracking"]) # Mount at /public so it becomes /public/track
 app.include_router(public_evidence.router, prefix=f"{settings.API_V1_STR}/public/evidence", tags=["evidence"])
 app.include_router(admin_auth.router, prefix=f"{settings.API_V1_STR}/admin/auth", tags=["admin-auth"])
 app.include_router(admin_reports.router, prefix=f"{settings.API_V1_STR}/admin/reports", tags=["admin-reports"])
+app.include_router(admin_updates.router, prefix=f"{settings.API_V1_STR}/admin/reports", tags=["admin-updates"]) # Mount at /admin/reports for /{id}/update
 app.include_router(admin_evidence.router, prefix=f"{settings.API_V1_STR}/admin/evidence", tags=["admin-evidence"])
 # app.include_router(api_router, prefix=settings.API_V1_STR)
 
