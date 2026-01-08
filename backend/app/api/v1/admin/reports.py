@@ -1,97 +1,65 @@
-from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
-from sqlalchemy.orm import selectinload
+from typing import List
+import uuid
 
 from app.db.session import get_db
-from app.api import deps
-from app.models.report import Report, ReportStateTracking
-from app.models.admin import Admin
+from app.models.beacon import Beacon
+# We need a schema that matches what the frontend expects.
+# The frontend Interface Report has: id, status, priority, credibility_score, created_at
+from pydantic import BaseModel
+from datetime import datetime
 
 router = APIRouter()
 
-# Schema for List View (Simplified)
-from pydantic import BaseModel, UUID4, Field
-from datetime import datetime
-from app.models.report import ReportStatus, ReportPriority
-
-class ReportListItem(BaseModel):
-    id: UUID4
-    status: ReportStatus
-    priority: ReportPriority
-    credibility_score: int | None
+class AdminReportSchema(BaseModel):
+    id: uuid.UUID
+    status: str
+    priority: str
+    credibility_score: int
     created_at: datetime
-    # No PII here
+    case_id: str
 
-class ReportDetail(BaseModel):
-    id: UUID4
-    status: ReportStatus
-    priority: ReportPriority
-    credibility_score: int | None
-    score_explanation: str | None
-    categories: list
-    location_meta: dict | None
-    created_at: datetime
-    # We include redacted conversations
-    conversations: List[dict] # Simplified for now
-    evidence: List[dict] 
+    class Config:
+        from_attributes = True
 
-@router.get("/", response_model=List[ReportListItem])
-async def read_reports(
-    db: AsyncSession = Depends(get_db),
-    skip: int = 0,
-    limit: int = 100,
-    current_admin: Admin = Depends(deps.get_current_admin),
-) -> Any:
-    """
-    Retrieve reports.
-    """
-    stmt = select(Report).order_by(desc(Report.created_at)).offset(skip).limit(limit)
-    result = await db.execute(stmt)
-    reports = result.scalars().all()
-    return reports
-
-@router.get("/{report_id}", response_model=ReportDetail)
-async def read_report_by_id(
-    report_id: UUID4,
-    db: AsyncSession = Depends(get_db),
-    current_admin: Admin = Depends(deps.get_current_admin),
-) -> Any:
-    """
-    Get a specific report by id with details.
-    """
-    # Eager load related data
-    stmt = select(Report).options(
-        selectinload(Report.conversations),
-        selectinload(Report.evidence)
-    ).where(Report.id == report_id)
-    
-    result = await db.execute(stmt)
-    report = result.scalar_one_or_none()
-    
-    if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
-        
-    return report
-
-@router.put("/{report_id}/status")
-async def update_report_status(
-    report_id: UUID4,
-    status: ReportStatus,
-    db: AsyncSession = Depends(get_db),
-    current_admin: Admin = Depends(deps.get_current_admin),
+@router.get("/", response_model=List[AdminReportSchema])
+async def get_reports(
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Update report status.
+    Fetch all reports for the admin dashboard.
     """
-    stmt = select(Report).where(Report.id == report_id)
-    result = await db.execute(stmt)
-    report = result.scalar_one_or_none()
+    query = select(Beacon).order_by(desc(Beacon.reported_at))
+    result = await db.execute(query)
+    beacons = result.scalars().all()
     
-    if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
+    # Map Beacon model to AdminReportSchema
+    # Note: Beacon model doesn't have 'status' or 'priority' fields matching the frontend exactly 
+    # (it has analysis_status). We will map them.
     
-    report.status = status
-    await db.commit()
-    return {"status": "updated", "new_status": status}
+    reports_data = []
+    for b in beacons:
+        # Map analysis_status to ReportStatus
+        status = "NEW"
+        if b.analysis_status == "completed":
+            status = "VERIFIED"
+        
+        # Mock priority based on score
+        priority = "MEDIUM"
+        if b.credibility_score and b.credibility_score > 80:
+            priority = "HIGH"
+        if b.credibility_score and b.credibility_score > 90:
+            priority = "CRITICAL"
+
+        reports_data.append(AdminReportSchema(
+            id=b.id,
+            status=status,
+            priority=priority,
+            credibility_score=b.credibility_score or 0,
+            created_at=b.reported_at,
+            case_id=b.case_id
+        ))
+
+    return reports_data

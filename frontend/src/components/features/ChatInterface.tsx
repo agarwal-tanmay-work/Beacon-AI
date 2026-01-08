@@ -9,6 +9,17 @@ import { Message } from "@/types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+// PII Redaction Helper
+function sanitizeContent(content: string) {
+    // Basic regex for email and phone numbers
+    const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
+    const phoneRegex = /\b(\+\d{1,2}\s?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
+
+    return content
+        .replace(emailRegex, "[EMAIL REDACTED]")
+        .replace(phoneRegex, "[PHONE REDACTED]");
+}
+
 export function ChatInterface() {
     const [messages, setMessages] = useState<Message[]>([
         {
@@ -162,7 +173,16 @@ export function ChatInterface() {
             };
 
             setMessages((prev) => [...prev, sysMsg]);
-            if (res.data.next_step) setCurrentStep(res.data.next_step);
+
+            // ONLY lock the chat if the response contains a real Case ID (BCN + digits)
+            // This prevents premature locking if the backend fails to generate the ID
+            const hasCaseId = /BCN\d{12}/.test(res.data.content);
+            if (res.data.next_step === "SUBMITTED" && hasCaseId) {
+                setCurrentStep("SUBMITTED");
+            } else if (res.data.next_step && res.data.next_step !== "SUBMITTED") {
+                setCurrentStep(res.data.next_step);
+            }
+            // If next_step is SUBMITTED but no Case ID, don't lock yet
 
         } catch (err: unknown) {
             console.error("Send Failed", err);
@@ -234,7 +254,7 @@ export function ChatInterface() {
                             >
                                 <div className="markdown-content">
                                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                        {msg.content}
+                                        {sanitizeContent(msg.content)}
                                     </ReactMarkdown>
                                 </div>
                                 <div className="mt-2 text-[10px] opacity-30 flex justify-end gap-1 items-center">

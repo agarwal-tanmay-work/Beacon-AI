@@ -14,7 +14,7 @@ Key Rules:
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import uuid
 import base64
@@ -93,6 +93,13 @@ class ReportEngine:
                 state_res = await local_session.execute(state_stmt)
                 state_tracking = state_res.scalar_one_or_none()
                 
+                if not state_tracking:
+                    # Auto-initialize if missing (Safety Net)
+                    await ReportEngine.initialize_report(report_id, "tk_auto_gen")
+                    state_stmt = select(LocalStateTracking).where(LocalStateTracking.session_id == report_id)
+                    state_res = await local_session.execute(state_stmt)
+                    state_tracking = state_res.scalar_one_or_none()
+
                 current_state = {}
                 if state_tracking and state_tracking.context_data:
                     current_state = state_tracking.context_data.get("extracted", {})
@@ -224,7 +231,7 @@ class ReportEngine:
                     report_id=UUIDType(report_id),  # Convert string to UUID
                     sender=SenderType.SYSTEM,
                     content=llm_response,
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc),
                     next_step=next_step,
                     case_id=case_id  # Include case_id in response when submitted
                 )
@@ -268,13 +275,13 @@ class ReportEngine:
         return evidence_files
 
     @staticmethod
-    async def initialize_report(report_id: str):
+    async def initialize_report(report_id: str, access_token: str):
         """
         Initialize a new report session in LOCAL SQLite.
-        
-        NO greeting is stored here. The LLM will greet naturally
-        when it receives the first user message.
         """
+        import hashlib
+        token_hash = hashlib.sha256(access_token.encode()).hexdigest()
+
         async with LocalAsyncSession() as local_session:
             # Check if session already exists
             stmt = select(LocalSession).where(LocalSession.id == report_id)
@@ -285,12 +292,21 @@ class ReportEngine:
                 print(f"[REPORT_ENGINE] Session {report_id} already exists")
                 return
             
+            # Create LocalSession
+            new_session = LocalSession(
+                id=report_id,
+                access_token_hash=token_hash,
+                is_active=True,
+                is_submitted=False
+            )
+            local_session.add(new_session)
+
             # Initialize state tracking locally
             state_tracking = LocalStateTracking(
                 session_id=report_id,
                 current_step="ACTIVE",
                 context_data={
-                    "initialized_at": datetime.utcnow().isoformat(),
+                    "initialized_at": datetime.now(timezone.utc).isoformat(),
                     "extracted": {}
                 }
             )

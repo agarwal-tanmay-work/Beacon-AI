@@ -17,7 +17,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={inter.className}>
+      <body className={inter.className} suppressHydrationWarning={true}>
         <AuroraBackground />
         <main className="min-h-screen flex flex-col items-center justify-center p-4">
           {children}

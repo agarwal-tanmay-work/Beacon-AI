@@ -53,9 +53,11 @@ export default function Home() {
             <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
           </button>
         </Link>
-        <button className="px-8 py-4 glass-button text-white font-semibold rounded-xl w-full sm:w-auto hover:bg-white/10">
-          Check Status
-        </button>
+        <Link href="/report">
+          <button className="px-8 py-4 glass-button text-white font-semibold rounded-xl w-full sm:w-auto hover:bg-white/10">
+            Check Status
+          </button>
+        </Link>
       </div>
 
       {/* Footer */}

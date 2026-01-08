@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"]
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -24,17 +24,17 @@ class Settings(BaseSettings):
             return v
         raise ValueError(v)
 
-    # Database - should be provided via DATABASE_URL env var
-    DATABASE_URL: str
+    # Database - defaults to Supabase, override via env for local dev
+    DATABASE_URL: str = ""
     
     # Supabase Storage & Client
-    SUPABASE_URL: str = "https://myvmzqrkitrqxummzhjw.supabase.co"
-    SUPABASE_KEY: str
+    SUPABASE_URL: str = ""
+    SUPABASE_KEY: str = ""
 
     # AI
     # AI
     GEMINI_API_KEY: str = ""
-    GROQ_API_KEY: str
+    GROQ_API_KEY: str = ""
     # IMPORTANT: Ensure this is set in backend_config.env or replaced here
 
     # Logging

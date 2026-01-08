@@ -1,27 +1,31 @@
 import axios from "axios";
 
-// Create Axios Instance
+// Standard production-ready API client
 export const api = axios.create({
-    baseURL: "http://localhost:8000/api/v1", // Consistent localhost origin
+    baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1",
     headers: {
         "Content-Type": "application/json",
     },
+    timeout: 120000,
 });
 
-// Request Interceptor
+// Request Logger
 api.interceptors.request.use(request => {
-    console.log('Starting Request', request.baseURL, request.url);
+    // Ensure URL doesn't start with a slash if baseURL is set
+    // though Axios handles this, we're being explicit
+    const fullPath = `${request.baseURL}${request.url?.startsWith('/') ? request.url : `/${request.url}`}`;
+    console.log(`[API Request] ${request.method?.toUpperCase()} ${fullPath}`);
     return request;
 });
 
-// Response Interceptor for generic error handling
+// Response Logger
 api.interceptors.response.use(
     (response) => {
-        console.log('Response:', response.status);
+        console.log(`[API Response] ${response.status} ${response.config.url}`);
         return response;
     },
     (error) => {
-        console.error("API Error Detailed:", error.config?.url, error.response?.status, error.message);
+        console.error(`[API Error] ${error.config?.url}: ${error.message}`);
         return Promise.reject(error);
     }
 );

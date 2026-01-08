@@ -1,0 +1,16 @@
+--- SCHEMA START ---
+id | NO | uuid
+reported_at | NO | timestamp with time zone
+credibility_score | YES | integer
+evidence_files | YES | jsonb
+created_at | YES | timestamp with time zone
+updated_at | YES | timestamp with time zone
+analysis_attempts | YES | integer
+credibility_breakdown | YES | jsonb
+case_id | NO | character varying
+incident_summary | YES | text
+analysis_last_error | YES | text
+score_explanation | YES | text
+analysis_status | YES | character varying
+authority_summary | YES | text
+--- SCHEMA END ---

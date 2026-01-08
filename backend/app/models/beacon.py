@@ -37,6 +37,7 @@ class Beacon(Base):
     # Generated Fields (set via UPDATE after background processing)
     incident_summary = Column(Text, nullable=True)
     credibility_score = Column(Integer, nullable=True)  # 1-100
+    score_explanation = Column(Text, nullable=True)     # Added to match DB
     credibility_breakdown = Column(JSON, nullable=True) # Full 8-dimension breakdown
     authority_summary = Column(Text, nullable=True)     # Internal neutral justification
     
