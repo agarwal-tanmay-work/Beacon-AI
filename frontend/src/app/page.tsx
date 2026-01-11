@@ -1,69 +1,181 @@
-import Link from "next/link";
-import { Shield, EyeOff, Lock, ArrowRight } from "lucide-react";
+"use client";
+
+import React, { useRef } from "react";
+import { FireSphere } from "@/components/ui/fire-sphere";
+import { SparklesCore } from "@/components/ui/sparkles";
+import { FAQSection } from "@/components/ui/faq-section";
+import { Hero } from "@/components/features/Hero";
 
 export default function Home() {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+
+
   return (
-    <div className="flex flex-col items-center justify-center space-y-12 text-center max-w-4xl">
-      {/* Hero */}
-      <div className="space-y-6 animate-fade-in">
-        <div className="mx-auto w-20 h-20 glass-panel rounded-full flex items-center justify-center mb-8 border-white/20">
-          <Shield className="w-10 h-10 text-emerald-400" />
-        </div>
-        <h1 className="text-6xl font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-b from-white to-white/60 neon-text">
-          Beacon AI
-        </h1>
-        <p className="text-xl text-white/70 max-w-2xl mx-auto leading-relaxed">
-          The government-grade, anonymous corruption reporting system.
-          Powered by advanced AI to protect your identity and ensure justice.
-        </p>
-      </div>
+    <div className="w-full relative bg-black text-white selection:bg-purple-500/30 overflow-hidden" ref={containerRef}>
 
-      {/* Features */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full px-4">
-        {[
-          {
-            icon: <EyeOff className="w-6 h-6 text-blue-400" />,
-            title: "100% Anonymous",
-            desc: "No personal data collected. Your identity remains hidden forever."
-          },
-          {
-            icon: <Lock className="w-6 h-6 text-purple-400" />,
-            title: "End-to-End Encrypted",
-            desc: "Military-grade encryption ensures your evidence is secure."
-          },
-          {
-            icon: <Shield className="w-6 h-6 text-emerald-400" />,
-            title: "AI Sanitization",
-            desc: "Automated PII redaction removes traces before human review."
-          }
-        ].map((feature, i) => (
-          <div key={i} className="glass-panel p-6 rounded-2xl flex flex-col items-center gap-4 hover:bg-white/5 transition-colors">
-            <div className="p-3 bg-white/5 rounded-full">{feature.icon}</div>
-            <h3 className="font-semibold text-lg">{feature.title}</h3>
-            <p className="text-sm text-white/50">{feature.desc}</p>
+      {/* --- HERO SECTION --- */}
+      <Hero />
+
+
+      {/* --- INTEGRITY / PROCESS SECTION (Was Forensic Verification) --- */}
+      <section className="relative w-full py-24 bg-black overflow-hidden">
+        <SparklesCore
+          id="tsparticlesfull"
+          background="transparent"
+          minSize={0.6}
+          maxSize={1.4}
+          particleDensity={50}
+          className="absolute inset-0 z-0 opacity-50"
+          particleColor="#FFFFFF"
+        />
+
+        <div className="container mx-auto px-4 relative z-10 grid md:grid-cols-2 gap-12 items-start">
+
+          {/* Left: Component - Data/Document Verification */}
+          <div className="space-y-10">
+            <h2 className="text-3xl md:text-[2.5rem] tracking-tight leading-tight font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60">
+              How Beacon AI Works
+            </h2>
+
+            <div className="space-y-8">
+              {/* 1. Optional Identity Disclosure */}
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold text-white/90">Optional Identity Disclosure</h3>
+                <p className="text-lg text-white/60 leading-relaxed font-light">
+                  Users can choose whether to remain anonymous or provide personal details. Identity disclosure is optional and controlled entirely by the reporter.
+                </p>
+              </div>
+
+              {/* 2. Guided Reporting Flow */}
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold text-white/90">Guided Reporting Flow</h3>
+                <p className="text-lg text-white/60 leading-relaxed font-light">
+                  The system guides users through structured questions, including what happened, a full description, location, time, involved parties, and supporting evidence.
+                </p>
+              </div>
+
+              {/* 3. Credibility Scoring */}
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold text-white/90">Credibility Scoring</h3>
+                <p className="text-lg text-white/60 leading-relaxed font-light">
+                  Each submission receives a single credibility score generated through AI-based analysis of consistency, context, and completeness across inputs.
+                </p>
+              </div>
+
+              {/* 4. Case ID & Secret Key */}
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold text-white/90">Case ID & Secret Key</h3>
+                <p className="text-lg text-white/60 leading-relaxed font-light">
+                  After submission, the system generates a unique Case ID and Secret Key, which are required for secure, anonymous case tracking.
+                </p>
+              </div>
+            </div>
           </div>
-        ))}
-      </div>
 
-      {/* Actions */}
-      <div className="flex flex-col sm:flex-row gap-4 w-full justify-center pt-8">
-        <Link href="/report">
-          <button className="group relative px-8 py-4 bg-white text-black font-bold rounded-xl hover:bg-white/90 transition-all flex items-center gap-2 text-lg w-full sm:w-auto justify-center shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:shadow-[0_0_30px_rgba(255,255,255,0.5)]">
-            Start Secure Report
-            <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-          </button>
-        </Link>
-        <Link href="/track">
-          <button className="px-8 py-4 glass-button text-white font-semibold rounded-xl w-full sm:w-auto hover:bg-white/10">
-            Check Status
-          </button>
-        </Link>
-      </div>
+          {/* Right: Institutional Text */}
+          <div className="space-y-10">
+            <h2 className="text-3xl md:text-[2.5rem] tracking-tight leading-tight font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60">
+              System Evaluation & Safeguards.
+            </h2>
+            <div className="space-y-8">
+              {/* 1. Structured Evaluation Process */}
+              <div className="flex flex-col gap-2">
+                <h3 className="text-lg font-semibold text-white/90">Structured Evaluation Process</h3>
+                <p className="text-lg text-white/60 leading-relaxed font-light">
+                  Reports are evaluated across multiple internal AI-driven stages to assess consistency across responses and alignment between narrative and evidence.
+                </p>
+              </div>
 
-      {/* Footer */}
-      <div className="absolute bottom-8 text-xs text-white/20 font-mono">
-        SECURE CONNECTION • 256-BIT ENCRYPTION • V5.0.0
-      </div>
+              {/* 2. Independent Case Handling */}
+              <div className="flex flex-col gap-2">
+                <h3 className="text-lg font-semibold text-white/90">Independent Case Handling</h3>
+                <p className="text-lg text-white/60 leading-relaxed font-light">
+                  Each report is processed as an isolated case. There is no cross-report linking, profiling, or identity correlation across submissions.
+                </p>
+              </div>
+
+              {/* 3. Secure Access Control */}
+              <div className="flex flex-col gap-2">
+                <h3 className="text-lg font-semibold text-white/90">Secure Access Control</h3>
+                <p className="text-lg text-white/60 leading-relaxed font-light">
+                  Access to any case strictly requires both the Case ID and Secret Key. Without both, case data cannot be retrieved.
+                </p>
+              </div>
+
+              {/* 4. Purpose of Scoring */}
+              <div className="flex flex-col gap-2">
+                <h3 className="text-lg font-semibold text-white/90">Purpose of Scoring</h3>
+                <p className="text-lg text-white/60 leading-relaxed font-light">
+                  The credibility score is used to prioritize and organize reports responsibly. It is not a judgment, verdict, or enforcement action.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* --- TECH CORE --- */}
+      <section className="relative w-full min-h-[45vh] bg-black flex flex-col items-center justify-center overflow-hidden py-24">
+        {/* Sparkles Background */}
+        <SparklesCore
+          id="tsparticlescontrol"
+          background="transparent"
+          minSize={0.6}
+          maxSize={1.4}
+          particleDensity={40}
+          className="absolute inset-0 z-0 opacity-50"
+          particleColor="#FFFFFF"
+        />
+
+        <div className="absolute inset-0 z-0 opacity-25">
+          <FireSphere
+            color1={[201, 158, 72]}
+            color0={[74, 30, 0]}
+            bloomStrength={0.3}
+          />
+        </div>
+
+        <div className="relative z-10 w-full max-w-3xl mx-auto px-6 text-center space-y-16 pointer-events-none">
+          <div className="space-y-6">
+            <h2 className="text-3xl md:text-[2.5rem] tracking-tight leading-tight font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60">
+              You Are in Control
+            </h2>
+            <p className="text-lg font-semibold text-white/90">
+              A protected space to speak, without pressure or exposure.
+            </p>
+          </div>
+
+          <div className="space-y-10 flex flex-col items-center justify-center">
+            <p className="text-lg text-white/80 leading-relaxed font-normal drop-shadow-lg">
+              You are not required to reveal who you are.<br />
+              Sharing personal details is optional and always your choice.
+            </p>
+            <p className="text-lg text-white/80 leading-relaxed font-normal drop-shadow-lg">
+              You decide what to say, how much to say, and when to submit.<br />
+              There are no public posts and no immediate judgments.
+            </p>
+            <p className="text-lg text-white/80 leading-relaxed font-normal drop-shadow-lg">
+              Each report is handled as an isolated case and can only be accessed using the Case ID and Secret Key generated after submission.
+            </p>
+            <p className="text-lg text-white/80 leading-relaxed font-normal drop-shadow-lg">
+              Beacon AI exists to give you time, privacy, and control when documenting difficult information.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* --- FAQ / TRUST --- */}
+      <FAQSection />
+
+      {/* --- FOOTER --- */}
+      <footer className="w-full py-12 px-6 border-t border-white/10 bg-black/95 backdrop-blur-xl relative z-20">
+        <div className="container mx-auto flex flex-col md:flex-row justify-between items-center text-white/30 text-sm">
+          <p>&copy; 2026 Beacon AI</p>
+          <p className="font-mono mt-4 md:mt-0 opacity-70">Secure. Anonymous. Verified.</p>
+        </div>
+      </footer>
+
     </div>
   );
 }

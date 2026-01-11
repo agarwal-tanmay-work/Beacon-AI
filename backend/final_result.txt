@@ -1,0 +1,48 @@
+2026-01-09 18:56:33,785 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2026-01-09 18:56:33,785 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-01-09 18:56:33,926 INFO sqlalchemy.engine.Engine select current_schema()
+2026-01-09 18:56:33,926 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-01-09 18:56:34,086 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2026-01-09 18:56:34,086 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-01-09 18:56:34,210 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-01-09 18:56:34,214 INFO sqlalchemy.engine.Engine SELECT beacon.id, beacon.reported_at, beacon.case_id, beacon.incident_summary, beacon.credibility_score, beacon.score_explanation, beacon.credibility_breakdown, beacon.authority_summary, beacon.secret_key, beacon.secret_key_hash, beacon.status, beacon.last_raw_status, beacon.last_framed_status, beacon.last_updated_at, beacon.evidence_files, beacon.created_at, beacon.updated_at, beacon.analysis_status, beacon.analysis_attempts, beacon.analysis_last_error 
+FROM beacon 
+WHERE beacon.case_id = $1::VARCHAR
+2026-01-09 18:56:34,214 INFO sqlalchemy.engine.Engine [generated in 0.00018s] ('BCN956513011998',)
+{
+  "case_id": "BCN956513011998",
+  "status": "completed",
+  "score": 35,
+  "summary": "Intelligence Summary:\n\nA report was filed on an unspecified date regarding a traffic officer, Mr. Kulkarni, who allegedly accepted a bribe of 2000 rupees at the Shivaji Park checkpoint. The reporter provided a photo as evidence, which was uploaded to the system. A case has been initiated with a Case ID and Secret Key assigned to the reporter for future status updates. The incident is currently under investigation.",
+  "breakdown": {
+    "evidence": {
+      "score": 5,
+      "reasoning": [
+        "The evidence digest shows 'NO TEXT DETECTED' for the uploaded image, which raises concerns about its relevance to the narrative.",
+        "The visual signals detected (possible currency colors and document layout) do not directly align with the narrative context of a bribe being taken."
+      ]
+    },
+    "narrative": {
+      "score": 25,
+      "reasoning": [
+        "The narrative is specific, mentioning the officer's name, the bribe amount, and the location.",
+        "The user claims to have a photo as evidence, which adds to the narrative's credibility."
+      ]
+    },
+    "rationale": [
+      "The narrative has some credibility due to its specificity, but the evidence provided does not strongly support the claim.",
+      "The absence of text detection in the image and the lack of direct alignment between the visual signals and the narrative context are significant negative signals."
+    ],
+    "behavioral": {
+      "score": 5,
+      "reasoning": [
+        "The user's cooperation in uploading the photo is a positive signal.",
+        "However, the lack of additional details or follow-up questions from the user raises some concerns about their stability and willingness to cooperate further."
+      ]
+    },
+    "confidence": "Low",
+    "limitations": "The investigation is limited by the lack of clear evidence directly supporting the bribe claim and the absence of detailed information about the incident.",
+    "safety_statement": "This assessment is based on the provided information and should not be considered as a final judgment on the guilt or innocence of the parties involved."
+  }
+}
+2026-01-09 18:56:34,336 INFO sqlalchemy.engine.Engine ROLLBACK

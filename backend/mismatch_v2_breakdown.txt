@@ -1,0 +1,44 @@
+2026-01-09 20:07:36,991 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2026-01-09 20:07:36,991 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-01-09 20:07:37,124 INFO sqlalchemy.engine.Engine select current_schema()
+2026-01-09 20:07:37,125 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-01-09 20:07:37,300 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2026-01-09 20:07:37,300 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-01-09 20:07:37,437 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-01-09 20:07:37,441 INFO sqlalchemy.engine.Engine SELECT beacon.id, beacon.reported_at, beacon.case_id, beacon.incident_summary, beacon.credibility_score, beacon.score_explanation, beacon.credibility_breakdown, beacon.authority_summary, beacon.secret_key, beacon.secret_key_hash, beacon.status, beacon.last_raw_status, beacon.last_framed_status, beacon.last_updated_at, beacon.evidence_files, beacon.created_at, beacon.updated_at, beacon.analysis_status, beacon.analysis_attempts, beacon.analysis_last_error 
+FROM beacon 
+WHERE beacon.case_id = $1::VARCHAR
+2026-01-09 20:07:37,441 INFO sqlalchemy.engine.Engine [generated in 0.00022s] ('BCN956513012005',)
+{
+  "evidence": {
+    "score": 25,
+    "reasoning": [
+      "The visual signal 'possible_currency_colors' in the uploaded image is somewhat relevant to the narrative, which mentions '500 rupees'.",
+      "However, the lack of text detection in the image and the absence of any other relevant visual signals limit the evidence's strength."
+    ]
+  },
+  "narrative": {
+    "score": 25,
+    "reasoning": [
+      "The narrative is somewhat specific, mentioning the amount of the bribe (500 rupees).",
+      "However, it lacks details such as the date of the incident and the location of the shop.",
+      "The user's response to the assistant's question about the date is uncooperative, which raises concerns about the narrative's credibility."
+    ]
+  },
+  "rationale": [
+    "The narrative lacks specific details, which raises concerns about its credibility.",
+    "The evidence is somewhat relevant, but its strength is limited by the lack of text detection and other relevant visual signals.",
+    "The user's behavior is evasive, which further limits the credibility of the narrative."
+  ],
+  "behavioral": {
+    "score": 5,
+    "reasoning": [
+      "The user's behavior is somewhat evasive, as they do not provide any additional information when asked about the date of the incident.",
+      "The user's response to the assistant's question is uncooperative, which raises concerns about their reliability."
+    ]
+  },
+  "confidence": "Medium",
+  "limitations": "The lack of specific details in the narrative and the limited relevance of the evidence.",
+  "safety_statement": "This assessment is based on the provided evidence and narrative, and its conclusions should not be taken as a definitive judgment of the case's validity."
+}
+2026-01-09 20:07:37,586 INFO sqlalchemy.engine.Engine ROLLBACK

@@ -1,3 +1,4 @@
+import os
 import httpx
 import asyncio
 import sys
@@ -36,6 +37,35 @@ async def chat():
                 if user_input.lower() in ["exit", "quit", "/exit"]:
                     print("Exiting session.")
                     break
+                
+                # UPLOAD COMMAND: /upload <path>
+                if user_input.lower().startswith("/upload "):
+                    file_path = user_input[8:].strip()
+                    file_path = file_path.strip('"').strip("'") # Handle quoted paths
+                    
+                    if not os.path.exists(file_path):
+                        print(f"[\033[1;31mERROR\033[0m]: File not found: {file_path}")
+                        continue
+                        
+                    print(f"[\033[1;36mSYSTEM\033[0m]: Uploading {os.path.basename(file_path)}...")
+                    try:
+                        files = {'file': open(file_path, 'rb')}
+                        upload_data = {
+                            "report_id": report_id,
+                            "access_token": token
+                        }
+                        upload_resp = await client.post(
+                            "http://127.0.0.1:8000/api/v1/public/evidence/upload",
+                            data=upload_data,
+                            files=files
+                        )
+                        if upload_resp.status_code == 200:
+                            print(f"[\033[1;32mSYSTEM\033[0m]: Success! File staged for analysis.\n")
+                        else:
+                            print(f"[\033[1;31mERROR\033[0m]: Upload failed ({upload_resp.status_code}): {upload_resp.text}")
+                    except Exception as upload_err:
+                        print(f"[\033[1;31mERROR\033[0m]: Upload request failed: {upload_err}")
+                    continue
 
                 payload = {
                     "report_id": report_id,
@@ -57,7 +87,11 @@ async def chat():
                 
                 if bot_data.get("next_step") == "SUBMITTED":
                     case_id = bot_data.get("case_id")
+                    secret_key = bot_data.get("secret_key")
                     print(f"\033[1;32m✅ SUCCESS: Your Case ID is {case_id}\033[0m")
+                    if secret_key:
+                        print(f"\033[1;33m🔑 SECRET KEY: {secret_key}\033[0m")
+                        print("SAVE THIS KEY! It is required to track your case later.")
                     print("The report has been stored in Supabase. You can exit now.")
                     break
                     

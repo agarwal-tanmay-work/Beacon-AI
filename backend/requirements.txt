@@ -16,3 +16,6 @@ python-magic
 pandas
 numpy
 supabase
+pytesseract
+openai-whisper
+opencv-python

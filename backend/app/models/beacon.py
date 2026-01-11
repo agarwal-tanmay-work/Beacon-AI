@@ -42,8 +42,14 @@ class Beacon(Base):
     authority_summary = Column(Text, nullable=True)     # Internal neutral justification
 
     # Secret Access & Status Tracking (New)
+    secret_key = Column(String(10), nullable=True)      # Visible Secret Key (XXXX-XXXX)
     secret_key_hash = Column(String, nullable=True)     # Hashed Secret Access Key
-    status = Column(String, default="Received", nullable=False) # Public Status
+    status = Column(String, default="Received", nullable=False) # Current Status Label
+    
+    # Status Updates (Sync from beacon_update)
+    last_raw_status = Column(Text, nullable=True)       # Raw NGO input
+    last_framed_status = Column(Text, nullable=True)    # LLM-framed public output
+    
     last_updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
     # Evidence (Base64 encoded files in JSONB)

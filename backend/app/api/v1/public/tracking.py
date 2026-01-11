@@ -29,22 +29,15 @@ async def track_case(
         raise generic_error
         
     # 2. Verify Secret Key
-    if not case.secret_key_hash:
-        # Legacy cases or error state - cannot strictly track without key
-        raise generic_error
+    # We allow tracking via the visible plain secret_key 
+    if not case.secret_key or case.secret_key != request.secret_key:
+        # Fallback check against hash if plain mismatch (handles legacy/migration)
+        if not case.secret_key_hash or not verify_password(request.secret_key, case.secret_key_hash):
+            raise generic_error
         
-    if not verify_password(request.secret_key, case.secret_key_hash):
-        raise generic_error
-        
-    # 3. Fetch Latest Public Update
-    update_stmt = select(BeaconUpdate).where(BeaconUpdate.case_id == request.case_id).order_by(desc(BeaconUpdate.created_at)).limit(1)
-    update_res = await db.execute(update_stmt)
-    latest_update = update_res.scalar_one_or_none()
-    
-    public_msg = latest_update.public_update if latest_update else None
-    
+    # 3. Return Latest Status
     return TrackStatusResponse(
         status=case.status,
         last_updated=case.last_updated_at,
-        public_update=public_msg
+        public_update=case.last_framed_status
     )

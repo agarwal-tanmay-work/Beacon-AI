@@ -1,0 +1,48 @@
+2026-01-09 20:10:18,259 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2026-01-09 20:10:18,259 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-01-09 20:10:18,381 INFO sqlalchemy.engine.Engine select current_schema()
+2026-01-09 20:10:18,381 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-01-09 20:10:18,538 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2026-01-09 20:10:18,538 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-01-09 20:10:18,658 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-01-09 20:10:18,662 INFO sqlalchemy.engine.Engine SELECT beacon.id, beacon.reported_at, beacon.case_id, beacon.incident_summary, beacon.credibility_score, beacon.score_explanation, beacon.credibility_breakdown, beacon.authority_summary, beacon.secret_key, beacon.secret_key_hash, beacon.status, beacon.last_raw_status, beacon.last_framed_status, beacon.last_updated_at, beacon.evidence_files, beacon.created_at, beacon.updated_at, beacon.analysis_status, beacon.analysis_attempts, beacon.analysis_last_error 
+FROM beacon 
+WHERE beacon.case_id = $1::VARCHAR
+2026-01-09 20:10:18,662 INFO sqlalchemy.engine.Engine [generated in 0.00020s] ('BCN956513012007',)
+{
+  "case_id": "BCN956513012007",
+  "status": "completed",
+  "score": 14,
+  "summary": "Intelligence Summary:\n\nA report was submitted on an unspecified date regarding a shopkeeper in the local market allegedly accepting bribes in exchange for basic goods. The reporter did not provide a specific date for the incident. A Case ID (CASE_ID_PLACEHOLDER) was assigned for tracking purposes. The report is currently under investigation.",
+  "breakdown": {
+    "evidence": {
+      "score": 5,
+      "reasoning": [
+        "The evidence is partially related to the narrative, but it shows a uniformed officer, not a shopkeeper.",
+        "The visual signal of possible currency colors is present, but it does not directly correlate with the narrative."
+      ]
+    },
+    "narrative": {
+      "score": 5,
+      "reasoning": [
+        "The narrative lacks specific details such as dates, names, and amounts.",
+        "The user does not provide a clear description of the incident."
+      ]
+    },
+    "rationale": [
+      "The narrative and evidence do not align well, raising concerns about the credibility of the claim.",
+      "The lack of specific details and evasive behavior from the user further reduce the credibility of the claim."
+    ],
+    "behavioral": {
+      "score": 4,
+      "reasoning": [
+        "The user is evasive when asked for more information about the incident.",
+        "The user does not cooperate fully with the assistant's requests."
+      ]
+    },
+    "confidence": "Low",
+    "limitations": "The evidence provided does not strongly support the narrative, and the user's behavior raises concerns about the credibility of the claim.",
+    "safety_statement": "This assessment is based on the provided evidence and narrative, and it does not necessarily determine the truth or guilt of the parties involved."
+  }
+}
+2026-01-09 20:10:18,786 INFO sqlalchemy.engine.Engine ROLLBACK

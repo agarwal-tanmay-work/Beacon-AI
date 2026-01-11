@@ -13,6 +13,7 @@ type ReportPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
 interface Report {
   id: string;
+  case_id?: string; // BCN ID
   status: ReportStatus;
   priority: ReportPriority;
   credibility_score?: number;
@@ -156,8 +157,7 @@ export default function Dashboard() {
                     onClick={() => router.push(`/case/${report.id}`)}
                   >
                     <td className="px-6 py-4 font-mono text-white">
-                      {/* Mock Case ID since schema is UUID primary, but usually we display case_id (BCN-...) */}
-                      {report.id.substring(0, 8).toUpperCase()}...
+                      {report.case_id || report.id.substring(0, 8).toUpperCase() + "..."}
                     </td>
                     <td className="px-6 py-4">
                       <span className={clsx("inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset", getStatusColor(report.status))}>

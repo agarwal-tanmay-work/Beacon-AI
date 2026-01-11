@@ -38,13 +38,9 @@ async def update_case_status(
     db.add(update_record)
     
     # 4. Update Main Case Status
-    # Simple logic: If update contains "closed" or "resolved", mark resolved? 
-    # For now, just keep status as generic "In Progress" or update if provided manually.
-    # But requirement said DO NOT allow editing past updates.
-    # Let's update the last_updated_at
+    case.last_raw_status = request.raw_update
+    case.last_framed_status = public_text
     case.last_updated_at = datetime.utcnow()
-    # We could infer status from text or let it be passed. Plan didn't specify strict status transitions.
-    # We will assume status remains current unless manually changed, but update timestamp.
     
     await db.commit()
     await db.refresh(update_record)

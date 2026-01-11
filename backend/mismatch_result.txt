@@ -1,0 +1,50 @@
+2026-01-09 19:22:35,921 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2026-01-09 19:22:35,921 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-01-09 19:22:36,051 INFO sqlalchemy.engine.Engine select current_schema()
+2026-01-09 19:22:36,051 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-01-09 19:22:36,228 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2026-01-09 19:22:36,229 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-01-09 19:22:36,362 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-01-09 19:22:36,368 INFO sqlalchemy.engine.Engine SELECT beacon.id, beacon.reported_at, beacon.case_id, beacon.incident_summary, beacon.credibility_score, beacon.score_explanation, beacon.credibility_breakdown, beacon.authority_summary, beacon.secret_key, beacon.secret_key_hash, beacon.status, beacon.last_raw_status, beacon.last_framed_status, beacon.last_updated_at, beacon.evidence_files, beacon.created_at, beacon.updated_at, beacon.analysis_status, beacon.analysis_attempts, beacon.analysis_last_error 
+FROM beacon 
+WHERE beacon.case_id = $1::VARCHAR
+2026-01-09 19:22:36,368 INFO sqlalchemy.engine.Engine [generated in 0.00029s] ('BCN956513012001',)
+{
+  "case_id": "BCN956513012001",
+  "status": "completed",
+  "score": 65,
+  "summary": "Intelligence Summary:\n\nA report was filed on an unspecified date by an individual regarding a shopkeeper at a local Kirana store demanding a bribe of 500 rupees in exchange for basic groceries. The incident occurred on the day of reporting. The complainant provided photographic evidence of the shopkeeper accepting the bribe, which was uploaded to the system. A Case ID (CASE_ID_PLACEHOLDER) was assigned to the report, and an investigation is pending.",
+  "breakdown": {
+    "evidence": {
+      "score": 25,
+      "reasoning": [
+        "The visual signal 'possible_currency_colors' in the uploaded image suggests a possible correlation with the narrative's mention of a bribe.",
+        "However, the lack of OCR text and the absence of more specific object labels (e.g., 'cash', 'money') limit the evidence's strength.",
+        "The image's relevance to the narrative is plausible but not conclusive."
+      ]
+    },
+    "narrative": {
+      "score": 30,
+      "reasoning": [
+        "The narrative is specific about the location (local Kirana store) and the amount of the bribe (500 rupees).",
+        "The user provides a clear and concise account of the incident, including the date (today).",
+        "However, the narrative lacks additional specific details, such as the time of day or the shopkeeper's name."
+      ]
+    },
+    "rationale": [
+      "The narrative and evidence provide some support for the corruption claim, but the lack of specific details and the limited strength of the evidence temper the overall credibility assessment.",
+      "The user's behavioral reliability is adequate, but the brief nature of the interaction limits the ability to fully assess their stability and cooperation."
+    ],
+    "behavioral": {
+      "score": 10,
+      "reasoning": [
+        "The user's responses are cooperative and timely, but the conversation is relatively short and lacks follow-up questions or additional details.",
+        "The user's decision to upload a photo as evidence suggests a willingness to cooperate, but the overall interaction is somewhat brief and lacks depth."
+      ]
+    },
+    "confidence": "Medium",
+    "limitations": "The lack of specific details in the narrative and the limited strength of the evidence are significant limitations in this assessment.",
+    "safety_statement": "This assessment is based on the provided evidence and narrative, but it is essential to note that credibility does not necessarily imply truth, and further investigation is required to determine the validity of the corruption claim."
+  }
+}
+2026-01-09 19:22:36,539 INFO sqlalchemy.engine.Engine ROLLBACK

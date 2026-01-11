@@ -1,88 +1,104 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
-
-class AIAnalysisResult(BaseModel):
-    summary: str = Field(..., description="Concise summary of the report")
-    entities: List[str] = Field(default_factory=list, description="Extracted relevant entities (people, places, orgs)")
-    detected_language: str = Field(..., description="ISO language code detected")
-    corruption_type_confidence: str = Field(..., description="Likely corruption type (e.g. Bribery)")
-
+from typing import List, Optional, Dict, Any
 from enum import Enum
 
-class ClarityLevel(str, Enum):
-    EXTREMELY_VAGUE = "EXTREMELY_VAGUE"
-    SOME_DETAILS_MAJOR_GAPS = "SOME_DETAILS_MAJOR_GAPS"
-    MOST_DETAILS_MINOR_GAPS = "MOST_DETAILS_MINOR_GAPS"
-    CLEAR_SPECIFIC = "CLEAR_SPECIFIC"
+# --- Forensic OCR Analysis Schema ---
 
-class ConsistencyLevel(str, Enum):
-    CONTRADICTORY = "CONTRADICTORY"
-    INCOHERENT = "INCOHERENT"
-    MOSTLY_CONSISTENT = "MOSTLY_CONSISTENT"
-    FULLY_COHERENT = "FULLY_COHERENT"
+class KeyElementsResults(BaseModel):
+    dates: List[str] = Field(default_factory=list)
+    amounts: List[str] = Field(default_factory=list)
+    names: List[str] = Field(default_factory=list)
+    locations: List[str] = Field(default_factory=list)
+    official_markers: List[str] = Field(default_factory=list)
 
-class EvidenceRelevance(str, Enum):
-    NONE = "NONE"
-    WEAK_UNCLEAR = "WEAK_UNCLEAR"
-    RELEVANT_PARTIAL = "RELEVANT_PARTIAL"
-    STRONG_DIRECT = "STRONG_DIRECT"
+class ForensicOCRAnalysis(BaseModel):
+    ocr_available: bool
+    ocr_text_quality: str = Field(..., description="high | medium | low")
+    key_elements_detected: KeyElementsResults
+    narrative_alignment: str = Field(..., description="none | partial | strong")
+    objective_notes: List[str]
+    limitations: List[str]
 
-class ToneLabel(str, Enum):
-    AGGRESSIVE_SENSATIONAL = "AGGRESSIVE_SENSATIONAL"
-    EMOTIONAL_CHARGED = "EMOTIONAL_CHARGED"
-    CALM_FACTUAL = "CALM_FACTUAL"
+# --- Forensic Audio/Video Analysis Schema ---
 
-class MaliciousFlag(str, Enum):
-    PERSONAL_VENDETTA = "PERSONAL_VENDETTA"
-    UNSUPPORTED_ACCUSATIONS = "UNSUPPORTED_ACCUSATIONS"
-    COPY_PASTE_CONTENT = "COPY_PASTE_CONTENT"
-    FAKE_EVIDENCE = "FAKE_EVIDENCE"
-    BOT_BEHAVIOR = "BOT_BEHAVIOR"
-    NONE = "NONE"
+class AudioKeyElements(BaseModel):
+    dates: List[str] = Field(default_factory=list)
+    amounts: List[str] = Field(default_factory=list)
+    names: List[str] = Field(default_factory=list)
+    locations: List[str] = Field(default_factory=list)
+    references: List[str] = Field(default_factory=list, description="References to documents, payments, official actions")
 
-class CredibilityFeatures(BaseModel):
-    # 1. Information Completeness
-    has_what: bool
-    has_where: bool
-    has_when: bool
-    has_how: bool
-    has_who: bool
-    completeness_level: ClarityLevel
+class ForensicAudioAnalysis(BaseModel):
+    transcription_available: bool
+    audio_clarity: str = Field(..., description="high | medium | low")
+    key_elements_detected: AudioKeyElements
+    narrative_alignment: str = Field(..., description="none | partial | strong")
+    objective_notes: List[str]
+    limitations: List[str]
 
-    # 2. Consistency
-    consistency_level: ConsistencyLevel
-    consistency_justification: str
+# --- Layer 1: Deterministic Evidence Flags ---
 
-    # 3. Evidence (AI Assessment of description/content)
-    # Note: Quantity is calculated in code, but AI assesses quality of what fits
-    evidence_quality_tier: EvidenceRelevance 
-    evidence_tampering_suspected: bool
+class EvidenceType(str, Enum):
+    IMAGE = "image"
+    AUDIO = "audio"
+    VIDEO = "video"
+    DOCUMENT = "document"
+    UNKNOWN = "unknown"
 
-    # 4. Tone
-    tone_label: ToneLabel
+class EvidenceMetadata(BaseModel):
+    file_name: str
+    file_path: str
+    file_type: EvidenceType
     
-    # 5. Temporal (AI Extracts date)
-    incident_date_extracted: Optional[str] = Field(None, description="ISO Date string YYYY-MM-DD if found")
-
-    # 6. Malicious Check
-    malicious_indicators: List[MaliciousFlag]
+    # Deterministic Flags
+    is_empty_or_corrupt: bool = False
+    is_duplicate: bool = False
+    file_hash: Optional[str] = None
+    file_size: Optional[int] = None
     
-    # 7. Cooperation (AI assesses from chat history)
-    user_responsiveness: str = Field(..., description="Assessment of user cooperation: 'EVASIVE', 'ADEQUATE', 'COOPERATIVE'")
+    # Extraction Results
+    ocr_text_snippet: Optional[str] = Field(None, description="First 500 chars of extracted text (if any)")
+    object_labels: List[str] = Field(default_factory=list, description="Detected objects (e.g. ['invoice', 'cash'])")
+    audio_transcript_snippet: Optional[str] = Field(None, description="First 500 chars of transcript")
+    
+    # Forensic Analysis (Layer 2)
+    forensic_analysis: Optional[ForensicOCRAnalysis] = None
+    forensic_audio_analysis: Optional[ForensicAudioAnalysis] = None
+    
+    # Relevance Signal (Still deterministic-ish heuristic, or simple keyword match)
+    has_relevant_keywords: bool = False
 
-    summary_narrative: str
+# --- Layer 2: LLM Reasoning Output ---
 
-class ScoringBreakdown(BaseModel):
-    information_completeness: int = Field(..., ge=0, le=20)
-    internal_consistency: int = Field(..., ge=0, le=15)
-    evidence_quality: int = Field(..., ge=0, le=25)
-    language_tone: int = Field(..., ge=0, le=10)
-    temporal_proximity: int = Field(..., ge=0, le=10)
-    corroboration_patterns: int = Field(..., ge=0, le=10)
-    user_cooperation: int = Field(..., ge=0, le=5)
-    malicious_penalty: int = Field(..., ge=-15, le=0)
+class NarrativeCredibilityScore(BaseModel):
+    score: int = Field(..., ge=0, le=40, description="0-40 score for consistency and details")
+    # No strict Enums for reasons, just strings
+    reasoning: List[str]
+
+class EvidenceStrengthScore(BaseModel):
+    score: int = Field(..., ge=0, le=40, description="0-40 score for evidence alignment")
+    reasoning: List[str]
+
+class BehavioralReliabilityScore(BaseModel):
+    score: int = Field(..., ge=0, le=20, description="0-20 score for interaction quality")
+    reasoning: List[str]
 
 class ScoringResult(BaseModel):
-    credibility_score: int = Field(..., ge=1, le=100)
-    breakdown: ScoringBreakdown
-    authority_summary: str = Field(..., description="Neutral, factual internal justification")
+    credibility_score: int = Field(..., ge=0, le=100)
+    
+    # Subscores
+    narrative_credibility: NarrativeCredibilityScore
+    evidence_strength: EvidenceStrengthScore
+    behavioral_reliability: BehavioralReliabilityScore
+    
+    rationale: List[str] = Field(..., description="Objective, bullet-point explanation")
+    confidence_level: str = Field(..., description="Low / Medium / High")
+    
+    limitations: str = Field(..., description="What could not be verified")
+    final_safety_statement: str = Field(..., description="Mandatory disclaimer")
+
+class AIAnalysisResult(BaseModel):
+    summary: str
+    entities: List[str]
+    detected_language: str
+    corruption_type_confidence: str

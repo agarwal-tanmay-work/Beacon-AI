@@ -1,18 +1,9 @@
-"""
-ScoringService - Phase 2 Analysis Engine (Async & Strict).
-
-Responsibilities:
-1. Fetch raw data (Chat History, Evidence) from Local/Supabase.
-2. Generate Intelligence (Summary, Score, Explanation) via AI.
-3. STRICT VALIDATION: No placeholders, no defaults, no missing fields.
-4. ATOMIC UPDATE: Write to 'beacon' table ONLY if all checks pass.
-5. Error Handling: Log internal errors, keep status='pending' for retry.
-"""
 
 from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from app.services.ai_service import GroqService
+from app.services.evidence_processor import EvidenceProcessor
 from app.models.beacon import Beacon
 from app.db.session import AsyncSessionLocal
 from app.db.local_db import LocalAsyncSession
@@ -27,16 +18,13 @@ logger = structlog.get_logger()
 
 class ScoringService:
     """
-    Phase 2: Asynchronous Analysis Engine.
+    Phase 2: Asynchronous Analysis Engine (Two-Layer Architecture).
     """
     
     @staticmethod
     async def run_background_scoring(session_id: str, case_id: str):
         """
         Background Entry Point.
-        - Idempotent-ish (can be retried).
-        - Updates Beacon table atomically on success.
-        - Updates analysis_attempts/last_error on failure.
         """
         logger.info("phase2_analysis_started", session_id=session_id, case_id=case_id)
         
@@ -50,152 +38,122 @@ class ScoringService:
                     if not chat_history:
                         raise ValueError("No chat history found for analysis.")
 
-                    # 2. Perform AI Analysis (Strict Mode)
-                    analysis_results = await ScoringService._perform_strict_analysis(chat_history, evidence_objs)
+                    # 2. Layer 1: Deterministic Evidence Processing
+                    evidence_metadata = EvidenceProcessor.process_evidence(evidence_objs)
+                            
+                    # 3. Layer 2: AI Reasoning
+                    summary = await GroqService.generate_pro_summary(chat_history)
                     
-                    if not analysis_results:
-                        raise ValueError("AI Analysis returned None (Strict Validation Failed).")
+                    # 3a. Forensic OCR Analysis (Enrichment)
+                    # We iterate through processed evidence. If validation passed and we have OCR text, we analyze it.
+                    for ev in evidence_metadata:
+                        if ev.file_type == "image" and ev.ocr_text_snippet and len(ev.ocr_text_snippet) > 10:
+                            # We limit to snippet to avoid huge context, or if we had full text stored, we'd use that.
+                            # For now, using the snippet is consistent with the simple model.
+                            # But ideally we want MORE than the snippet if available. 
+                            # Since we don't store full text in metadata, we trust the snippet is representative or lengthy enough.
+                            
+                            logger.info("running_forensic_ocr", file=ev.file_name)
+                            analysis = await GroqService.perform_forensic_ocr_analysis(
+                                ocr_text=ev.ocr_text_snippet, # In real app, pass full text
+                                narrative_summary=summary
+                            )
+                            if analysis:
+                                ev.forensic_analysis = analysis
                     
-                    print(f"[DEBUG] Analysis Results: {json.dumps(analysis_results, indent=2)}")
-                        
-                    # 3. Validate Outputs (Double Check)
-                    ScoringService._assert_no_placeholders(analysis_results)
+                    # 3b. Forensic Audio Analysis (Enrichment)
+                    for ev in evidence_metadata:
+                        if ev.file_type == "audio" and ev.audio_transcript_snippet and len(ev.audio_transcript_snippet) > 10:
+                            # Skip error messages
+                            if ev.audio_transcript_snippet.startswith("["):
+                                continue
+                                
+                            logger.info("running_forensic_audio", file=ev.file_name)
+                            audio_analysis = await GroqService.perform_forensic_audio_analysis(
+                                transcript_text=ev.audio_transcript_snippet,
+                                narrative_summary=summary,
+                                audio_metadata={"clarity": "medium"}  # Basic metadata
+                            )
+                            if audio_analysis:
+                                ev.forensic_audio_analysis = audio_analysis
                     
-                    # 4. Atomic Commit
-                    await ScoringService._commit_valid_results(case_id, analysis_results, supabase_session)
+                    # 3c. Forensic Visual Analysis (Enrichment)
+                    for ev in evidence_metadata:
+                        if ev.file_type == "image":
+                            # We fetch the raw content for vision analysis
+                            # Note: LocalEvidence stores the file_path
+                            try:
+                                with open(ev.file_path, "rb") as f:
+                                    img_content = f.read()
+                                
+                                logger.info("running_forensic_visual", file=ev.file_name)
+                                visual_desc = await GroqService.perform_forensic_visual_analysis(
+                                    image_bytes=img_content,
+                                    mime_type="image/png" if ev.file_name.lower().endswith(".png") else "image/jpeg"
+                                )
+                                if visual_desc:
+                                    ev.object_labels.append(f"context: {visual_desc}")
+                            except Exception as e:
+                                logger.warning("visual_forensic_failed", error=str(e))
+                    metadata = {
+                        "evidence_count": len(evidence_objs),
+                        "timestamp": str(datetime.utcnow()),
+                        "layer1_flags": [m.dict() for m in evidence_metadata] # Now includes forensic_analysis
+                    }
+                    
+                    score_result = await GroqService.calculate_credibility_score(chat_history, evidence_metadata, metadata)
+                    
+                    if not score_result:
+                         raise ValueError("AI Scoring returned None.")
+
+                    # 4. Strict Validation
+                    score = score_result.credibility_score
+                    if not (0 <= score <= 100):
+                         raise ValueError(f"Invalid Score: {score}")
+
+                    # 5. Atomic Commit
+                    # We map the new Pydantic models to JSON for storage
+                    breakdown_json = {
+                        "narrative": score_result.narrative_credibility.dict(),
+                        "evidence": score_result.evidence_strength.dict(),
+                        "behavioral": score_result.behavioral_reliability.dict(),
+                        "rationale": score_result.rationale,
+                        "confidence": score_result.confidence_level,
+                        "limitations": score_result.limitations,
+                        "safety_statement": score_result.final_safety_statement
+                    }
+                    
+                    stmt = (
+                        update(Beacon)
+                        .where(Beacon.case_id == case_id)
+                        .values(
+                            incident_summary=summary,
+                            credibility_score=score,
+                            credibility_breakdown=breakdown_json,
+                            score_explanation="\n".join(score_result.rationale), # Legacy field fallback
+                            authority_summary=f"Confidence: {score_result.confidence_level}. {score_result.final_safety_statement}",
+                            analysis_status="completed",
+                            analysis_last_error=None
+                        )
+                    )
+                    await supabase_session.execute(stmt)
+                    await supabase_session.commit()
+                    
+                    logger.info("phase2_analysis_success", case_id=case_id, score=score)
                     
                 except Exception as e:
                     logger.error("phase2_analysis_failed", case_id=case_id, error=str(e))
                     await ScoringService._record_failure(case_id, str(e), supabase_session)
 
     @staticmethod
-    async def _perform_strict_analysis(chat_history: List[Dict], evidence_objs: List[Any]) -> Optional[Dict[str, Any]]:
-        """
-        Orchestrates AI calls. Returns None if ANY component fails.
-        """
-        # Evidence Analysis
-        evidence_summary_text = "No evidence provided."
-        if evidence_objs:
-            evidence_analyses = []
-            for ev in evidence_objs:
-                try:
-                    f_path = ev.file_path
-                    f_mime = ev.mime_type
-                    if os.path.exists(f_path):
-                        with open(f_path, "rb") as f:
-                            file_bytes = f.read()
-                        analysis = await GroqService.analyze_evidence(file_bytes, f_mime)
-                        evidence_analyses.append(f"File {ev.file_name}: {analysis.get('analysis', 'No analysis')}")
-                    else:
-                        evidence_analyses.append(f"File {ev.file_name}: File missing")
-                except Exception as e:
-                    logger.warning("evidence_analysis_partial_fail", error=str(e))
-            if evidence_analyses:
-                evidence_summary_text = "; ".join(evidence_analyses)
-
-        # Incident Summary
-        summary = await GroqService.generate_pro_summary(chat_history)
-        if not summary or "INSUFFICIENT" in summary.upper():
-            logger.warning("analysis_aborted_invalid_summary")
-            return None
-
-        # Credibility Score
-        metadata = {"evidence_count": len(evidence_objs), "timestamp": str(datetime.utcnow())}
-        score_data = await GroqService.calculate_scoring_rubric(chat_history, evidence_summary_text, metadata)
-        
-        if not score_data:
-            logger.warning("analysis_aborted_scoring_failed")
-            return None
-            
-        score = score_data.get("credibility_score")
-        breakdown = score_data.get("breakdown")
-        auth_summary = score_data.get("authority_summary")
-        
-        # Strict validation of all dimension keys
-        required_keys = [
-            "information_completeness", "internal_consistency", "evidence_quality",
-            "language_tone", "temporal_proximity", "corroboration_patterns",
-            "user_cooperation", "malicious_penalty"
-        ]
-        if not breakdown or not all(k in breakdown for k in required_keys):
-            logger.error("analysis_aborted_malformed_breakdown", breakdown=breakdown)
-            return None
-
-        # Log individual dimensions
-        logger.info("scoring_dimensions_calculated", 
-                    case_id="...", # Note: case_id not in this scope directly but logged at caller level
-                    score=score, 
-                    **breakdown)
-        
-        # Strict constraints
-        if score is None or not (1 <= score <= 100):
-            logger.warning("analysis_aborted_invalid_score", score=score)
-            return None
-            
-        if not auth_summary or len(auth_summary) < 10:
-             logger.warning("analysis_aborted_invalid_authority_summary")
-             return None
-
-        return {
-            "incident_summary": summary,
-            "credibility_score": score,
-            "credibility_breakdown": breakdown,
-            "authority_summary": auth_summary
-        }
-
-    @staticmethod
-    def _assert_no_placeholders(data: Dict[str, Any]):
-        """
-        Final safety check for forbidden strings. Raises ValueError if found.
-        """
-        forbidden = [
-            "insert summary here", "automated scoring unavailable", 
-            "system error", "default neutral", "insufficient information",
-            "[insert", "[add summary", "placeholder summary"
-        ]
-        
-        combined = (str(data.get("incident_summary")) + str(data.get("authority_summary"))).lower()
-        
-        for term in forbidden:
-            if term in combined:
-                raise ValueError(f"Strict Check Failed: Forbidden validation term '{term}' found in output.")
-
-    @staticmethod
-    async def _commit_valid_results(case_id: str, results: Dict[str, Any], session: AsyncSession):
-        """
-        Writes valid results to DB and sets status='completed'.
-        """
-        stmt = (
-            update(Beacon)
-            .where(Beacon.case_id == case_id)
-            .values(
-                incident_summary=results["incident_summary"],
-                credibility_score=results["credibility_score"],
-                credibility_breakdown=results["credibility_breakdown"],
-                authority_summary=results["authority_summary"],
-                analysis_status="completed",
-                analysis_last_error=None # Clear previous errors
-            )
-        )
-        await session.execute(stmt)
-        await session.commit()
-        logger.info("phase2_analysis_success", case_id=case_id)
-
-    @staticmethod
     async def _record_failure(case_id: str, error_msg: str, session: AsyncSession):
-        """
-        Updates failure stats without changing analysis_status from 'pending'.
-        """
         try:
-            # We want to increment logic. SA update with increment is cleaner, 
-            # but fetching first is safer for simple logic.
-            # actually strict SQL update is better for concurrency.
             stmt = (
                 update(Beacon)
                 .where(Beacon.case_id == case_id)
                 .values(
                     analysis_attempts=Beacon.analysis_attempts + 1,
-                    analysis_last_error=error_msg[:1000] # Truncate likely
+                    analysis_last_error=error_msg[:1000]
                 )
             )
             await session.execute(stmt)

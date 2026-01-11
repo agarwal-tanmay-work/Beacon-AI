@@ -36,7 +36,7 @@ from uuid import UUID as UUIDType
 from passlib.context import CryptContext
 import secrets
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
 class ReportEngine:
@@ -166,8 +166,17 @@ class ReportEngine:
                     # We need a supabase session for reading existing max IDs
                     case_id = await CaseService.generate_next_case_id(supabase_session)
                     
-                    # Replace placeholder in LLM response
+                    # ---------------------------------------------------------
+                    # GENERATE SECRET KEY (EARLY FOR REPLACEMENT)
+                    # ---------------------------------------------------------
+                    # Generate 8 character hex key and format as XXXX-XXXX
+                    raw_hex = secrets.token_hex(4).upper() 
+                    secret_key_display = f"{raw_hex[:4]}-{raw_hex[4:]}"
+                    secret_key_hash = pwd_context.hash(secret_key_display)
+                    
+                    # Replace placeholders in LLM response
                     llm_response = llm_response.replace("CASE_ID_PLACEHOLDER", case_id)
+                    llm_response = llm_response.replace("SECRET_KEY_PLACEHOLDER", secret_key_display)
                     
                     # Get reported_at timestamp (IST via time_utils)
                     from app.core.time_utils import get_ist_now
@@ -181,13 +190,6 @@ class ReportEngine:
                     # Store Raw Data Immediately. No AI / Scoring here.
                     # ---------------------------------------------------------
 
-                    # Generate Secret Key
-                    # Format: XXXX-XXXX-XXXX-XXXX (16 chars, high entropy)
-                    # We use secrets.token_urlsafe but formatted for readability
-                    raw_secret = secrets.token_hex(8).upper() # 16 hex chars
-                    secret_key_display = f"{raw_secret[:4]}-{raw_secret[4:8]}-{raw_secret[8:12]}-{raw_secret[12:]}"
-                    secret_key_hash = pwd_context.hash(secret_key_display)
-                    
                     beacon_row = Beacon(
                         reported_at=reported_at_ist,
                         case_id=case_id,
@@ -201,6 +203,7 @@ class ReportEngine:
                         incident_summary=None,
                         credibility_score=None,
                         # Secret Key & Status Tracking
+                        secret_key=secret_key_display,
                         secret_key_hash=secret_key_hash,
                         status="Received",
                         last_updated_at=reported_at_ist
@@ -255,6 +258,15 @@ class ReportEngine:
         except Exception as e:
             print(f"[REPORT_ENGINE] ❌ ERROR processing message for {report_id}: {type(e).__name__}: {e}")
             traceback.print_exc()
+            
+            # DEBUG: Write to file for agent visibility
+            try:
+                with open("error.log", "w", encoding="utf-8") as f:
+                    f.write(f"Error: {str(e)}\n")
+                    f.write(traceback.format_exc())
+            except Exception as write_err:
+                 print(f"FAILED TO WRITE LOG: {write_err}")
+            
             await supabase_session.rollback()
             raise
 

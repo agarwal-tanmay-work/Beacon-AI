@@ -10,6 +10,9 @@ export const metadata: Metadata = {
   description: "Secure Anti-Corruption Reporting",
 };
 
+import { AppNavBar } from "@/components/ui/app-navbar";
+import { PixelCursorTrail } from "@/components/ui/pixel-trail";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -18,8 +21,17 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={inter.className} suppressHydrationWarning={true}>
+        <div className="fixed top-6 left-8 z-[100] pointer-events-none select-none">
+          <div className="bg-black/50 border border-white/10 backdrop-blur-lg py-3 px-6 rounded-full shadow-lg flex items-center justify-center">
+            <span className="text-xl font-bold text-white tracking-[0.1em] drop-shadow-[0_0_15px_rgba(0,255,255,0.8)] opacity-90">
+              Beacon AI
+            </span>
+          </div>
+        </div>
+        <PixelCursorTrail />
+        <AppNavBar />
         <AuroraBackground />
-        <main className="min-h-screen flex flex-col items-center justify-center p-4">
+        <main className="min-h-screen flex flex-col items-center justify-center p-0 overflow-x-hidden">
           {children}
         </main>
       </body>
