@@ -36,6 +36,9 @@ type Particle = {
     originalX: number;
     originalY: number;
     color: string;
+    r: number;
+    g: number;
+    b: number;
     opacity: number;
     originalAlpha: number;
     velocityX: number;
@@ -93,7 +96,8 @@ export default function VaporizeTextCycle({
     // Calculate device pixel ratio
     const globalDpr = useMemo(() => {
         if (typeof window !== "undefined") {
-            return window.devicePixelRatio * 1.5 || 1;
+            // Balanced multiplier for sharpness vs performance (1.7 instead of 2.0)
+            return Math.min(window.devicePixelRatio, 1.7) || 1.5;
         }
         return 1;
     }, []);
@@ -240,10 +244,11 @@ export default function VaporizeTextCycle({
                         particle.x = particle.originalX;
                         particle.y = particle.originalY;
                         const opacity = Math.min(fadeOpacityRef.current, 1) * particle.originalAlpha;
-                        const color = particle.color.replace(/[\d.]+\)$/, `${opacity})`);
-                        ctx.fillStyle = color;
+                        ctx.globalAlpha = opacity;
+                        ctx.fillStyle = particle.color;
                         ctx.fillRect(particle.x / globalDpr, particle.y / globalDpr, 1, 1);
                     });
+                    ctx.globalAlpha = 1.0;
                     ctx.restore();
 
                     if (fadeOpacityRef.current >= 1) {
@@ -597,11 +602,10 @@ const createParticles = (
     for (let y = 0; y < canvas.height; y += sampleRate) {
         for (let x = 0; x < canvas.width; x += sampleRate) {
 
-            // OPTIMIZATION: Checkerboard thinning (keep 1/4)
-            // This reduces lag while maintaining the text's shape better than a large stride
+            // OPTIMIZATION: Checkerboard thinning (keep 1/3 instead of 1/2 for better performance balance)
             const col = Math.round(x / sampleRate);
             const row = Math.round(y / sampleRate);
-            if ((row + col) % 4 !== 0) continue;
+            if ((row + col) % 3 !== 0) continue;
 
             const index = (y * canvas.width + x) * 4;
             const alpha = data[index + 3];
@@ -614,7 +618,10 @@ const createParticles = (
                     y,
                     originalX: x,
                     originalY: y,
-                    color: `rgba(${data[index]}, ${data[index + 1]}, ${data[index + 2]}, ${originalAlpha})`,
+                    color: `rgb(${data[index]}, ${data[index + 1]}, ${data[index + 2]})`,
+                    r: data[index],
+                    g: data[index + 1],
+                    b: data[index + 2],
                     opacity: originalAlpha,
                     originalAlpha,
                     // Animation properties
@@ -705,15 +712,15 @@ const updateParticles = (
                 particle.y += particle.velocityY * deltaTime * 10;
 
                 // Calculate fade rate based on vaporize duration
-                const baseFadeRate = 0.25;
+                const baseFadeRate = 0.8; // Increased from 0.25 for faster fade-out
                 const durationBasedFadeRate = baseFadeRate * (2000 / VAPORIZE_DURATION);
 
-                // Slower fade out for more persistence, scaled by duration
+                // Faster fade out for less persistence
                 particle.opacity = Math.max(0, particle.opacity - deltaTime * durationBasedFadeRate);
             }
 
-            // Check if this particle is still visible
-            if (particle.opacity > 0.01) {
+            // Check if this particle is still visible - more aggressive threshold (0.08) to speed up reset
+            if (particle.opacity > 0.08) {
                 allParticlesVaporized = false;
             }
         } else {
@@ -730,14 +737,15 @@ const renderParticles = (ctx: CanvasRenderingContext2D, particles: Particle[], g
     ctx.scale(globalDpr, globalDpr);
 
     particles.forEach(particle => {
-        if (particle.opacity > 0) {
-            const color = particle.color.replace(/[\d.]+\)$/, `${particle.opacity})`);
-            ctx.fillStyle = color;
-            // OPTIMIZATION: Slightly larger particles (2.5) to compensate for checkerboard thinning
-            // This ensures brightness is preserved despite having fewer particles
-            ctx.fillRect(particle.x / globalDpr, particle.y / globalDpr, 2.5, 2.5);
+        if (particle.opacity > 0.01) {
+            ctx.globalAlpha = particle.opacity;
+            ctx.fillStyle = particle.color;
+            // Using 2.2 size for better coverage with 1/3 thinning
+            ctx.fillRect(particle.x / globalDpr, particle.y / globalDpr, 2.2, 2.2);
         }
     });
+
+    ctx.globalAlpha = 1.0;
 
     ctx.restore();
 };

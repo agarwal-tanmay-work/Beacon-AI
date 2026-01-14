@@ -1,16 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ShieldCheck, Lock, Upload, User, Bot, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Bot, Paperclip, Send, User, ChevronRight, X, FileText, Download, Image as ImageIcon, Loader2, Music } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Message } from "@/types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChatInput } from "@/components/ui/chat-input";
-import { Button } from "@/components/ui/button";
-import { Paperclip, Mic, CornerDownLeft } from "lucide-react";
 
 // PII Redaction Helper
 function sanitizeContent(content: string) {
@@ -22,15 +19,33 @@ function sanitizeContent(content: string) {
         .replace(phoneRegex, "[PHONE REDACTED]");
 }
 
+interface Attachment {
+    type: 'image' | 'file' | 'audio';
+    url?: string;
+    name: string;
+    size: number;
+    mimeType?: string;
+}
+
+interface ExtendedMessage extends Message {
+    attachments?: Attachment[];
+}
+
 export function ChatInterface() {
-    const [messages, setMessages] = useState<Message[]>([
-        {
-            id: "initial-greeting",
-            sender: "SYSTEM",
-            content: "Hello. I am Beacon AI, your compassionate and anonymous assistant. I'm here to help you report corruption safely. Please know that your identity is fully protected, and I will guide you through this process one step at a time. How can I assist you today?",
-            timestamp: new Date().toISOString()
-        }
-    ]);
+    const [mounted, setMounted] = useState(false);
+    const [messages, setMessages] = useState<ExtendedMessage[]>([]);
+
+    useEffect(() => {
+        setMounted(true);
+        setMessages([
+            {
+                id: "initial-greeting",
+                sender: "SYSTEM",
+                content: "Hello. I am Beacon AI, your compassionate and anonymous assistant. I'm here to help you report corruption safely. Please know that your identity is fully protected, and I will guide you through this process one step at a time.\n\nHow can I assist you today?",
+                timestamp: new Date().toISOString()
+            }
+        ]);
+    }, []);
     const [inputValue, setInputValue] = useState("");
     const [loading, setLoading] = useState(false);
     const [reportId, setReportId] = useState<string | null>(null);
@@ -40,6 +55,11 @@ export function ChatInterface() {
 
     const [totalUploadSize, setTotalUploadSize] = useState(0);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    // File Upload State (Multi-file)
+    const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+    const [previewUrls, setPreviewUrls] = useState<Map<string, string>>(new Map());
 
     const [secretKey, setSecretKey] = useState<string | null>(null);
     const [finalCaseId, setFinalCaseId] = useState<string | null>(null);
@@ -47,94 +67,130 @@ export function ChatInterface() {
     const isLocked = currentStep === "SUBMITTED";
 
     useEffect(() => {
-        bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages, loading]);
+        if (textareaRef.current) {
+            textareaRef.current.style.height = "inherit";
+            textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+        }
+    }, [inputValue]);
+
+    useEffect(() => {
+        bottomRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "nearest",
+            inline: "nearest"
+        });
+    }, [messages, loading, pendingFiles]);
+
+    // Clean up preview URLs
+    useEffect(() => {
+        return () => {
+            previewUrls.forEach(url => URL.revokeObjectURL(url));
+        };
+    }, []);
 
     const handleFileUploadRequest = () => {
         if (isLocked) return;
         fileInputRef.current?.click();
     };
 
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (!e.target.files || !e.target.files[0]) return;
-        const file = e.target.files[0];
-        const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files || e.target.files.length === 0) return;
 
-        if (totalUploadSize + file.size > MAX_SIZE) {
-            setMessages(prev => [...prev, {
-                id: crypto.randomUUID(),
-                sender: "SYSTEM",
-                content: `⚠️ Upload Rejected: Total file size limit (5MB) exceeded.`,
-                timestamp: new Date().toISOString()
-            }]);
+        const newFiles = Array.from(e.target.files);
+        const MAX_SIZE = 5 * 1024 * 1024; // 5MB per file check (or total?)
+
+        // Filter and add valid files
+        const validFiles: File[] = [];
+        let addedSize = 0;
+
+        newFiles.forEach(file => {
+            // Simple individual check for now, can be cumulative
+            if (file.size > MAX_SIZE) {
+                // Maybe show toast? For now just skip
+                console.warn(`File ${file.name} too large`);
+                return;
+            }
+            validFiles.push(file);
+            addedSize += file.size;
+
+            if (file.type.startsWith('image/')) {
+                const url = URL.createObjectURL(file);
+                setPreviewUrls(prev => new Map(prev).set(file.name, url));
+            }
+        });
+
+        if (totalUploadSize + addedSize > 50 * 1024 * 1024) { // Global safety cap
+            alert("Total upload size limit exceeded.");
             return;
         }
 
-        let currentReportId = reportId;
-        let currentAccessToken = accessToken;
+        setPendingFiles(prev => [...prev, ...validFiles]);
+        setTotalUploadSize(prev => prev + addedSize);
 
-        if (!currentReportId || !currentAccessToken) {
-            try {
-                const seed = Math.random().toString(36).substring(7);
-                const initRes = await api.post("/public/reports/create", { client_seed: seed });
-                currentReportId = initRes.data.report_id;
-                currentAccessToken = initRes.data.access_token;
-                setReportId(currentReportId);
-                setAccessToken(currentAccessToken);
-            } catch (err) {
-                console.error("Session init failed", err);
-                return;
-            }
-        }
+        // Reset input
+        e.target.value = "";
+    };
 
-        if (!currentReportId || !currentAccessToken) return;
+    const removeFile = (index: number) => {
+        const fileToRemove = pendingFiles[index];
+        setPendingFiles(prev => prev.filter((_, i) => i !== index));
+        setTotalUploadSize(prev => prev - fileToRemove.size);
 
-        const formData = new FormData();
-        formData.append("report_id", currentReportId);
-        formData.append("access_token", currentAccessToken);
-        formData.append("file", file);
-
-        try {
-            setLoading(true);
-            await api.post("/public/evidence/upload", formData, {
-                headers: { "Content-Type": "multipart/form-data" }
+        if (previewUrls.has(fileToRemove.name)) {
+            const url = previewUrls.get(fileToRemove.name);
+            if (url) URL.revokeObjectURL(url);
+            setPreviewUrls(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(fileToRemove.name);
+                return newMap;
             });
-            setTotalUploadSize(prev => prev + file.size);
-            setMessages(prev => [...prev, {
-                id: crypto.randomUUID(),
-                sender: "SYSTEM",
-                content: `✅ Evidence Uploaded: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`,
-                timestamp: new Date().toISOString()
-            }]);
-        } catch (err) {
-            console.error("Upload failed", err);
-        } finally {
-            setLoading(false);
-            if (fileInputRef.current) fileInputRef.current.value = "";
         }
     };
 
     const handleSendMessage = async (e?: React.FormEvent) => {
         e?.preventDefault();
-        if (isLocked || !inputValue.trim()) return;
+
+        // Allow send if there is text OR files
+        if (isLocked || (!inputValue.trim() && pendingFiles.length === 0)) return;
 
         const content = inputValue.trim();
-        setInputValue("");
+        const filesToSend = [...pendingFiles];
+        const currentPreviews = new Map(previewUrls);
 
-        const userMsg: Message = {
+        // Prepare Attachments for UI
+        const attachments: Attachment[] = filesToSend.map(file => ({
+            type: file.type.startsWith('image/') ? 'image' :
+                file.type.startsWith('audio/') ? 'audio' : 'file',
+            url: currentPreviews.get(file.name),
+            name: file.name,
+            size: file.size,
+            mimeType: file.type
+        }));
+
+        // Immediate UI Update
+        const userMsg: ExtendedMessage = {
             id: crypto.randomUUID(),
             sender: "USER",
             content: content,
             timestamp: new Date().toISOString(),
+            attachments: attachments.length > 0 ? attachments : undefined
         };
 
         setMessages((prev) => [...prev, userMsg]);
+
+        // Clear inputs immediately
+        setInputValue("");
+        setPendingFiles([]);
+        // We DON'T revoke URLs yet because they are used in the message bubble.
+        // In a real app we'd upload -> get remote URL -> replace. 
+        // For here we keep local ObjectURL alive or let it leak until refresh.
         setLoading(true);
 
         try {
             let currentReportId = reportId;
             let currentAccessToken = accessToken;
 
+            // Initialize session if needed
             if (!currentReportId || !currentAccessToken) {
                 const seed = Math.random().toString(36).substring(7);
                 const initRes = await api.post("/public/reports/create", { client_seed: seed });
@@ -144,247 +200,263 @@ export function ChatInterface() {
                 setAccessToken(currentAccessToken);
             }
 
+            if (!currentReportId || !currentAccessToken) throw new Error("Session init failed");
+
+            // 1. Upload ALL Files sequentially (to keep simple)
+            for (const file of filesToSend) {
+                const formData = new FormData();
+                formData.append("report_id", currentReportId);
+                formData.append("access_token", currentAccessToken);
+                formData.append("file", file);
+
+                await api.post("/public/evidence/upload", formData, {
+                    headers: { "Content-Type": "multipart/form-data" }
+                });
+            }
+
+            // 2. Send Message
+            const fileNames = filesToSend.map(f => f.name).join(", ");
+            // If empty content but has files, add context for LLM
+            const messageContent = content || (filesToSend.length > 0 ? `[User uploaded ${filesToSend.length} files: ${fileNames}]` : " ");
+
             const res = await api.post("/public/reports/message", {
                 report_id: currentReportId,
                 access_token: currentAccessToken,
-                content: userMsg.content,
+                content: messageContent,
             });
 
-            const sysMsg: Message = {
+            const sysMsg: ExtendedMessage = {
                 id: crypto.randomUUID(),
                 sender: res.data.sender,
                 content: res.data.content,
                 timestamp: res.data.timestamp,
-                next_step: res.data.next_step
+                // next_step logic
             };
 
-            setMessages((prev) => [...prev, sysMsg]);
-
+            // Check for next_step / case_id logic
             if (res.data.next_step === "SUBMITTED") {
                 setCurrentStep("SUBMITTED");
                 if (res.data.case_id) setFinalCaseId(res.data.case_id);
                 if (res.data.secret_key) setSecretKey(res.data.secret_key);
+                sysMsg.next_step = "SUBMITTED";
             } else if (res.data.next_step) {
                 setCurrentStep(res.data.next_step);
+                sysMsg.next_step = res.data.next_step;
             }
+
+            setMessages((prev) => [...prev, sysMsg]);
 
         } catch (err) {
             console.error("Send Failed", err);
+            // Error handling UI could be added here
         } finally {
             setLoading(false);
         }
     };
 
     return (
-        <div className="w-full max-w-5xl flex flex-col h-[85vh] relative overflow-hidden bg-white/[0.01] rounded-[2.5rem] border border-white/5 backdrop-blur-3xl shadow-[0_0_100px_rgba(0,0,0,0.5)]">
-            {/* SCANNING LINE EFFECT */}
-            <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden rounded-[2.5rem]">
-                <motion.div
-                    animate={{ y: ["0%", "100%", "0%"] }}
-                    transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
-                    className="w-full h-[2px] bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent opacity-30 shadow-[0_0_15px_rgba(16,185,129,0.2)]"
-                />
-            </div>
+        <div className="w-full max-w-6xl mx-auto flex flex-col gap-6 h-full">
+            {/* Main Chat Card */}
+            <div className="w-full bg-black/40 backdrop-blur-3xl border border-white/10 rounded-t-[2rem] rounded-b-xl overflow-hidden flex flex-col h-full min-h-[500px] shadow-2xl relative">
 
-            {/* INVISIBLE FILE INPUT */}
-            <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} accept="image/*,application/pdf,video/*" />
+                {/* Header */}
+                <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5 bg-white/5 backdrop-blur-md">
+                    <span className="text-white font-semibold text-lg tracking-wide">Beacon AI</span>
+                </div>
 
-            {/* SUCCESS OVERLAY */}
-            <AnimatePresence>
-                {isLocked && secretKey && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="absolute inset-0 z-[60] flex items-center justify-center p-6 bg-black/90 backdrop-blur-2xl"
-                    >
-                        <motion.div
-                            initial={{ scale: 0.9, y: 20 }}
-                            animate={{ scale: 1, y: 0 }}
-                            className="w-full max-w-lg bg-black/40 backdrop-blur-3xl border border-emerald-500/30 rounded-[3rem] p-10 shadow-[0_0_100px_rgba(16,185,129,0.15)] relative overflow-hidden"
-                        >
-                            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-emerald-500 to-transparent" />
+                {/* Messages Area */}
+                <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-hide relative">
 
-                            <div className="text-center mb-10">
-                                <div className="w-24 h-24 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-emerald-500/20 shadow-[0_0_50px_rgba(16,185,129,0.2)]">
-                                    <CheckCircle2 className="w-12 h-12 text-emerald-400" />
-                                </div>
-                                <h2 className="text-4xl font-bold text-white mb-2 tracking-tight">Transmission Secured</h2>
-                                <p className="text-white/40 text-xs font-mono uppercase tracking-[0.3em] font-medium">Uplink Status: TERMINATED</p>
-                            </div>
+                    <AnimatePresence initial={false}>
+                        {messages.map((msg) => (
+                            <motion.div
+                                key={msg.id}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className={cn(
+                                    "flex w-full",
+                                    msg.sender === "USER" ? "justify-end" : "justify-start"
+                                )}
+                            >
+                                <div className={cn(
+                                    "flex gap-4 max-w-[85%]",
+                                    msg.sender === "USER" ? "flex-row-reverse" : "flex-row"
+                                )}>
 
-                            <div className="space-y-8">
-                                <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-3xl p-8 group cursor-pointer active:scale-[0.98] transition-all hover:bg-emerald-500/10"
-                                    onClick={() => {
-                                        navigator.clipboard.writeText(`Case ID: ${finalCaseId}\nSecret Key: ${secretKey}`);
-                                    }}>
-                                    <div className="flex justify-between items-center mb-4">
-                                        <p className="text-[10px] text-emerald-400 font-mono uppercase tracking-[0.3em] font-bold">Secret Access Key</p>
-                                        <div className="flex items-center gap-1">
-                                            <span className="text-[9px] text-emerald-500/60 font-mono">ENCRYPTED</span>
-                                            <Lock className="w-3 h-3 text-emerald-500/50" />
+                                    {/* Bubble */}
+                                    <div className={cn(
+                                        "relative p-5 rounded-[1.25rem] text-[15px] leading-relaxed flex flex-col gap-3",
+                                        msg.sender === "USER"
+                                            ? "bg-blue-600/90 text-white rounded-tr-none shadow-[0_4px_20px_rgba(37,99,235,0.2)]"
+                                            : "bg-white/5 border border-white/10 text-gray-200 rounded-tl-none backdrop-blur-md shadow-lg"
+                                    )}>
+                                        {/* Attachments Grid */}
+                                        {msg.attachments && msg.attachments.length > 0 && (
+                                            <div className="flex flex-wrap gap-2 mb-1">
+                                                {msg.attachments.map((att, idx) => (
+                                                    att.type === 'image' ? (
+                                                        <div key={idx} className="relative rounded-lg overflow-hidden border border-white/10 max-w-[200px]">
+                                                            <img
+                                                                src={att.url}
+                                                                alt={att.name}
+                                                                className="w-full h-auto object-cover max-h-[200px]"
+                                                            />
+                                                        </div>
+                                                    ) : (
+                                                        <div key={idx} className="flex items-center gap-3 bg-white/10 p-3 rounded-lg border border-white/10 min-w-[150px]">
+                                                            <div className="p-2 bg-white/10 rounded-lg">
+                                                                {att.type === 'audio' ? (
+                                                                    <Music className="w-6 h-6 text-white" />
+                                                                ) : (
+                                                                    <FileText className="w-6 h-6 text-white" />
+                                                                )}
+                                                            </div>
+                                                            <div className="flex-1 min-w-0">
+                                                                <p className="text-sm font-medium text-white truncate max-w-[120px]">{att.name}</p>
+                                                                <p className="text-xs text-white/50">{(att.size / 1024).toFixed(1)} KB</p>
+                                                            </div>
+                                                        </div>
+                                                    )
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {/* Text Content */}
+                                        {msg.content && msg.content.trim() !== "" && (
+                                            <div className="markdown-content whitespace-pre-wrap">
+                                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                                    {sanitizeContent(msg.content)}
+                                                </ReactMarkdown>
+                                            </div>
+                                        )}
+
+                                        {/* Timestamp in Bubble */}
+                                        <div className={cn(
+                                            "mt-1 flex items-center gap-1.5 text-[10px] opacity-50 font-mono",
+                                            msg.sender === "USER" ? "text-blue-200" : "text-gray-400"
+                                        )}>
+                                            <div className="w-1 h-1 rounded-full bg-current" />
+                                            {mounted ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : "--:-- --"}
                                         </div>
                                     </div>
-                                    <div className="font-mono text-4xl text-white font-bold tracking-[0.3em] break-words text-center py-4 drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]">
-                                        {secretKey}
-                                    </div>
-                                    <div className="w-full h-px bg-emerald-500/10 my-4" />
-                                    <p className="text-center text-[10px] text-emerald-500/40 font-mono uppercase tracking-widest group-hover:text-emerald-500 transition-colors">Click to copy vital records</p>
                                 </div>
-
-                                <div className="flex bg-orange-500/5 border border-orange-500/20 p-6 rounded-3xl items-start gap-5">
-                                    <div className="p-2 bg-orange-500/10 rounded-xl">
-                                        <AlertTriangle className="w-6 h-6 text-orange-400 shrink-0" />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <p className="text-[13px] text-orange-200/80 leading-relaxed font-semibold">One-Time Revelation</p>
-                                        <p className="text-xs text-orange-200/40 leading-relaxed">
-                                            This key is never shown again. Without it, your report remains inaccessible. Secure it immediately.
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="mt-10 text-center text-[10px] text-white/10 font-mono tracking-[0.3em] uppercase">
-                                Log purging initiated • Security Level 4
-                            </div>
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-
-            {/* MESSAGES AREA */}
-            <div className="flex-1 overflow-y-auto px-6 py-10 space-y-8 scrollbar-hide">
-                <AnimatePresence initial={false}>
-                    {messages.map((msg, i) => (
-                        <motion.div
-                            key={msg.id}
-                            initial={{ opacity: 0, y: 20, scale: 0.98 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-                            className={cn(
-                                "flex w-full group",
-                                msg.sender === "USER" ? "justify-end" : "justify-start"
-                            )}
-                        >
-                            <div className={cn(
-                                "flex items-end gap-4 max-w-[85%] md:max-w-[70%]",
-                                msg.sender === "USER" ? "flex-row-reverse" : "flex-row"
-                            )}>
-                                {/* Avatar */}
-                                <div className={cn(
-                                    "w-10 h-10 rounded-full flex items-center justify-center border shrink-0 transition-all duration-500",
-                                    msg.sender === "USER"
-                                        ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-400 group-hover:border-indigo-500/40"
-                                        : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 group-hover:border-emerald-500/40"
-                                )}>
-                                    {msg.sender === "USER" ? <User size={18} /> : <ShieldCheck size={18} />}
-                                </div>
-
-                                {/* Bubble */}
-                                <div className={cn(
-                                    "relative p-6 rounded-[2rem] border transition-all duration-500",
-                                    msg.sender === "USER"
-                                        ? "bg-indigo-500/5 border-indigo-500/20 text-white rounded-br-none hover:bg-indigo-500/10 group-hover:border-indigo-500/30"
-                                        : "bg-white/5 border-white/10 text-white/90 rounded-bl-none hover:bg-white/[0.08] group-hover:border-white/20"
-                                )}>
-                                    {/* Glass inner glow */}
-                                    <div className="absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent opacity-50" />
-
-                                    <div className="markdown-content text-[15px] leading-relaxed tracking-tight font-medium">
-                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                            {sanitizeContent(msg.content)}
-                                        </ReactMarkdown>
-                                    </div>
-
-                                    <div className={cn(
-                                        "mt-3 text-[10px] font-mono tracking-widest uppercase opacity-20 group-hover:opacity-40 transition-opacity flex items-center gap-2",
-                                        msg.sender === "USER" ? "justify-end" : "justify-start"
-                                    )}>
-                                        {msg.sender !== "USER" && <span className="w-1 h-1 rounded-full bg-emerald-500" />}
-                                        {new Date(msg.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
-                                        {msg.sender === "USER" && <span className="w-1 h-1 rounded-full bg-indigo-500" />}
-                                    </div>
-                                </div>
-                            </div>
-                        </motion.div>
-                    ))}
+                            </motion.div>
+                        ))}
+                    </AnimatePresence>
 
                     {loading && (
-                        <motion.div
-                            initial={{ opacity: 0, scale: 0.9 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            className="flex justify-start"
-                        >
-                            <div className="bg-white/5 border border-white/10 px-6 py-4 rounded-[1.5rem] rounded-bl-none flex items-center gap-2">
-                                <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 1 }} className="w-2 h-2 bg-emerald-500/50 rounded-full" />
-                                <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 1, delay: 0.2 }} className="w-2 h-2 bg-blue-500/50 rounded-full" />
-                                <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 1, delay: 0.4 }} className="w-2 h-2 bg-purple-500/50 rounded-full" />
+                        <div className="flex gap-4">
+                            <div className="bg-white/5 border border-white/10 px-4 py-3 rounded-[1.25rem] rounded-tl-none ml-0">
+                                <div className="flex gap-1">
+                                    <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                                    <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                                    <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                                </div>
                             </div>
-                        </motion.div>
+                        </div>
                     )}
-                </AnimatePresence>
-                <div ref={bottomRef} className="h-4" />
-            </div>
+                    <div ref={bottomRef} className="h-1" />
+                </div>
 
-            {/* INPUT AREA */}
-            <div className="p-6 bg-gradient-to-t from-black via-black/80 to-transparent backdrop-blur-sm z-20">
-                <form
-                    className="relative rounded-[2rem] border border-white/10 bg-white/5 focus-within:border-emerald-500/40 focus-within:ring-1 focus-within:ring-emerald-500/20 transition-all duration-300 p-2 overflow-hidden shadow-2xl"
-                    onSubmit={handleSendMessage}
-                >
-                    <ChatInput
-                        value={inputValue}
-                        onChange={(e) => setInputValue(e.target.value)}
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter" && !e.shiftKey) {
-                                e.preventDefault();
-                                handleSendMessage();
-                            }
-                        }}
-                        placeholder={isLocked ? "Session Terminated" : "Type your message securely..."}
-                        disabled={isLocked || loading}
-                        className="min-h-12 resize-none rounded-2xl bg-transparent border-0 p-4 shadow-none focus-visible:ring-0 text-white placeholder:text-white/20"
-                    />
-                    <div className="flex items-center p-2 pt-0 gap-2">
-                        <Button
-                            variant="ghost"
-                            size="icon"
+                {/* Input Area */}
+                <div className="p-4 bg-white/[0.02] border-t border-white/5 relative">
+
+                    {/* Pre-upload Preview (Thumbnails Only) */}
+                    <AnimatePresence>
+                        {pendingFiles.length > 0 && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: 10 }}
+                                className="absolute bottom-full left-4 mb-2 z-10 w-[calc(100%-2rem)]"
+                            >
+                                <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                                    {pendingFiles.map((file, idx) => (
+                                        <div key={`${file.name}-${idx}`} className="relative group shrink-0">
+                                            {/* Thumbnail Container */}
+                                            <div className={cn(
+                                                "w-16 h-16 rounded-xl border border-white/10 overflow-hidden flex items-center justify-center shadow-lg transition-transform hover:scale-105",
+                                                file.type.startsWith('image/') ? "bg-black" : "bg-white/5"
+                                            )}>
+                                                {file.type.startsWith('image/') && previewUrls.get(file.name) ? (
+                                                    <img
+                                                        src={previewUrls.get(file.name)}
+                                                        alt="preview"
+                                                        className="w-full h-full object-cover"
+                                                    />
+                                                ) : file.type.startsWith('audio/') ? (
+                                                    <Music className="w-6 h-6 text-white/50" />
+                                                ) : (
+                                                    <FileText className="w-6 h-6 text-white/50" />
+                                                )}
+
+                                                {/* NO Text Details as per requirement */}
+                                            </div>
+
+                                            {/* X Button (Top Right corner of thumbnail) */}
+                                            <button
+                                                onClick={() => removeFile(idx)}
+                                                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-white shadow-md hover:bg-red-600 transition-colors z-20"
+                                            >
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
+                    <form
+                        onSubmit={handleSendMessage}
+                        className="w-full flex items-center gap-3 bg-white/5 border border-white/10 rounded-full pl-4 pr-1.5 py-1.5 focus-within:bg-white/[0.07] focus-within:border-white/20 transition-all duration-300 shadow-inner"
+                    >
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            className="hidden"
+                            onChange={handleFileSelect}
+                            multiple // Enable multiple files
+                            accept="image/*,audio/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        />
+
+                        <button
                             type="button"
                             onClick={handleFileUploadRequest}
+                            className={cn(
+                                "transition-colors p-1",
+                                pendingFiles.length > 0 ? "text-blue-400" : "text-white/30 hover:text-white"
+                            )}
+                        >
+                            <Paperclip className="w-5 h-5" />
+                        </button>
+
+                        <textarea
+                            ref={textareaRef}
+                            value={inputValue}
+                            onChange={(e) => setInputValue(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.shiftKey) {
+                                    e.preventDefault();
+                                    handleSendMessage();
+                                }
+                            }}
+                            placeholder="Type your message..."
+                            className="flex-1 bg-transparent border-none text-white placeholder-white/20 focus:outline-none focus:ring-0 text-sm px-2 font-light resize-none py-2 max-h-32 scrollbar-hide"
                             disabled={isLocked || loading}
-                            className="rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition-colors"
-                        >
-                            <Paperclip className="size-5" />
-                            <span className="sr-only">Attach file</span>
-                        </Button>
+                            rows={1}
+                        />
 
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            type="button"
-                            className="rounded-xl text-white/40 hover:text-white hover:bg-white/5 transition-colors"
+                        <button
+                            type="submit"
+                            disabled={(!inputValue.trim() && pendingFiles.length === 0) || loading || isLocked}
+                            className="bg-[#1A5CFF] hover:bg-blue-600 text-white px-5 py-2.5 rounded-full flex items-center gap-2 text-sm font-medium transition-all duration-300 shadow-[0_0_15px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            <Mic className="size-5" />
-                            <span className="sr-only">Use Microphone</span>
-                        </Button>
-
-                        <div className="ml-auto flex items-center gap-3">
-                            <div className="hidden md:flex items-center gap-2 text-[10px] text-white/20 font-mono tracking-widest mr-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                ENCRYPTED TUNNEL
-                            </div>
-                            <Button
-                                type="submit"
-                                size="sm"
-                                disabled={isLocked || loading || !inputValue.trim()}
-                                className="gap-1.5 bg-emerald-500 text-black hover:bg-emerald-400 rounded-xl px-5 font-bold shadow-[0_0_20px_rgba(16,185,129,0.2)] transition-all active:scale-95"
-                            >
-                                Send
-                                <CornerDownLeft className="size-4" />
-                            </Button>
-                        </div>
-                    </div>
-                </form>
+                            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 ml-0.5" />}
+                            Send
+                        </button>
+                    </form>
+                </div>
             </div>
         </div>
     );

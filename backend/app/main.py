@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+import os
 import traceback
 import structlog
 
@@ -26,11 +28,7 @@ async def lifespan(app: FastAPI):
     Initializes local SQLite database for staging data.
     """
     logger.info("startup", project=settings.PROJECT_NAME)
-    
-    # Initialize local SQLite database for staging
-    from app.db.local_db import init_local_db
-    await init_local_db()
-    
+    print(f"[STARTUP] Allowed CORS Origins: {settings.CORS_ORIGINS}")
     yield
     logger.info("shutdown")
 
@@ -44,10 +42,9 @@ app = FastAPI(
 )
 
 # Middleware: CORS
-# HARDCODED FOR DEVELOPMENT - GUARANTEED TO WORK
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -84,6 +81,12 @@ app.include_router(admin_auth.router, prefix=f"{settings.API_V1_STR}/admin/auth"
 app.include_router(admin_reports.router, prefix=f"{settings.API_V1_STR}/admin/reports", tags=["admin-reports"])
 app.include_router(admin_updates.router, prefix=f"{settings.API_V1_STR}/admin/reports", tags=["admin-updates"]) # Mount at /admin/reports for /{id}/update
 app.include_router(admin_evidence.router, prefix=f"{settings.API_V1_STR}/admin/evidence", tags=["admin-evidence"])
+
+# Mount Static Files (Uploads)
+UPLOAD_DIR = "uploads"
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 # app.include_router(api_router, prefix=settings.API_V1_STR)
 
 if __name__ == "__main__":

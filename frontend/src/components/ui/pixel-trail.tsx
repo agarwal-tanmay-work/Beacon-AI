@@ -32,7 +32,6 @@ export function PixelCursorTrail() {
 
     const handleMouseMove = useCallback(
         (e: MouseEvent) => {
-            // Global mouse move
             const x = e.clientX
             const y = e.clientY
 
@@ -40,7 +39,8 @@ export function PixelCursorTrail() {
             const dy = y - lastPositionRef.current.y
             const distance = Math.sqrt(dx * dx + dy * dy)
 
-            if (distance > PIXEL_SIZE) {
+            // Increased threshold slightly for performance
+            if (distance > 18) {
                 const newPixel = createPixel(x, y)
                 setPixels((prev) => [...prev.slice(-TRAIL_LENGTH), newPixel])
                 lastPositionRef.current = { x, y }
@@ -50,21 +50,26 @@ export function PixelCursorTrail() {
     )
 
     useEffect(() => {
-        const animate = () => {
-            setPixels((prev) =>
-                prev
-                    .map((pixel) => ({
-                        ...pixel,
-                        opacity: pixel.opacity - FADE_SPEED,
-                        age: pixel.age + 1,
-                    }))
-                    .filter((pixel) => pixel.opacity > 0),
-            )
+        let lastTime = 0;
+        const animate = (time: number) => {
+            // Cap at ~60fps for stability during scroll
+            if (time - lastTime > 16) {
+                setPixels((prev) =>
+                    prev
+                        .map((pixel) => ({
+                            ...pixel,
+                            opacity: pixel.opacity - FADE_SPEED,
+                            age: pixel.age + 1,
+                        }))
+                        .filter((pixel) => pixel.opacity > 0),
+                )
+                lastTime = time;
+            }
             animationRef.current = requestAnimationFrame(animate)
         }
 
         animationRef.current = requestAnimationFrame(animate)
-        window.addEventListener("mousemove", handleMouseMove)
+        window.addEventListener("mousemove", handleMouseMove, { passive: true })
 
         return () => {
             if (animationRef.current) {

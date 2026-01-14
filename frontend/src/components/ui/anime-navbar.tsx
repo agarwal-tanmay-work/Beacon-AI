@@ -24,7 +24,6 @@ export function AnimeNavBar({ items, className, defaultActive = "Home", alignmen
     const pathname = usePathname()
     const [mounted, setMounted] = useState(false)
     const [hoveredTab, setHoveredTab] = useState<string | null>(null)
-    const [activeTab, setActiveTab] = useState<string>(defaultActive)
     const [isMobile, setIsMobile] = useState(false)
 
     useEffect(() => {
@@ -58,17 +57,13 @@ export function AnimeNavBar({ items, className, defaultActive = "Home", alignmen
                 >
                     {items.map((item) => {
                         const Icon = item.icon
-                        const isActive = activeTab === item.name
+                        const isActive = pathname === item.url
                         const isHovered = hoveredTab === item.name
 
                         return (
                             <Link
                                 key={item.name}
                                 href={item.url}
-                                onClick={(e) => {
-                                    e.preventDefault()
-                                    setActiveTab(item.name)
-                                }}
                                 onMouseEnter={() => setHoveredTab(item.name)}
                                 onMouseLeave={() => setHoveredTab(null)}
                                 className={cn(

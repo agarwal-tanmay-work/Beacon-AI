@@ -40,26 +40,6 @@ class StorageService:
             file_path = f"{now.year}/{now.month}/{unique_name}"
             
             bucket = client.storage.from_(cls.BUCKET_NAME)
-            
-            # Check if bucket exists (naive check: try listing or similar. Better: try create_bucket if specific error)
-            # Supabase-py 'create_bucket' might throw if exists, or return info.
-            # Safe pattern: try to retrieve bucket, if not implies logic. 
-            # Actually, `client.storage.create_bucket` is the method.
-            
-            try:
-                # Try creating (idempotent-ish in some clients, but let's be safe)
-                client.storage.create_bucket(cls.BUCKET_NAME, options={"public": True})
-            except Exception:
-                # If exists, verify it is public?
-                # Supabase-py doesn't have a simple "update_bucket" in all versions easily accessible here without admin.
-                # But typically create_bucket fails if exists.
-                # We assume if it exists we might need to manually ensure, but for now let's hope it was created.
-                # Users can manually toggle "Public" in dashboard if needed.
-                # However, let's try to update it just in case:
-                try:
-                    client.storage.update_bucket(cls.BUCKET_NAME, options={"public": True})
-                except:
-                    pass
 
             # Upload
             res = bucket.upload(

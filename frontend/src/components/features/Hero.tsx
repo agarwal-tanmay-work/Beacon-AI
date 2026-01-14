@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo } from "react";
+import Link from "next/link";
 import { InteractiveHoverButton } from "@/components/ui/interactive-hover-button";
 import VaporizeTextCycle, { Tag } from "@/components/ui/vapour-text-effect";
 import { SparklesCore } from "@/components/ui/sparkles";
@@ -25,7 +26,7 @@ export function Hero() {
                     spread={5}
                     density={5}
                     animation={useMemo(() => ({
-                        vaporizeDuration: 2,
+                        vaporizeDuration: 3,
                         fadeInDuration: 1,
                         waitDuration: 0.5,
                     }), [])}
@@ -75,12 +76,12 @@ export function Hero() {
                     </p>
 
                     <div className="flex flex-wrap items-center justify-center gap-10">
-                        <a href="/report">
+                        <Link href="/report">
                             <InteractiveHoverButton text="Start Report" className="w-[220px] h-14 bg-white text-black hover:bg-white/90 shadow-[0_0_40px_rgba(255,255,255,0.2)] text-xl font-semibold" />
-                        </a>
-                        <a href="/track">
+                        </Link>
+                        <Link href="/track">
                             <InteractiveHoverButton text="Track Status" className="w-[220px] h-14 bg-white/5 text-white border-white/20 hover:bg-white/20 backdrop-blur-xl text-xl font-semibold transition-all duration-300" />
-                        </a>
+                        </Link>
                     </div>
                 </div>
             </div>

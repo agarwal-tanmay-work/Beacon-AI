@@ -42,6 +42,10 @@ async def update_case_status(
     case.last_framed_status = public_text
     case.last_updated_at = datetime.utcnow()
     
+    # Optional Status Change
+    if request.status:
+        case.status = request.status
+    
     await db.commit()
     await db.refresh(update_record)
     

@@ -31,9 +31,6 @@ async def create_report(
         error_msg = f"DB_ERROR: {str(e)[:200]}"
         raise HTTPException(status_code=500, detail=error_msg)
     
-    # For now, we'll use a mocked token associated with the ID.
-    access_token = f"tk_{uuid.uuid4().hex[:12]}"
-
     return ReportResponse(
         report_id=uuid.UUID(report_id),
         access_token=access_token,

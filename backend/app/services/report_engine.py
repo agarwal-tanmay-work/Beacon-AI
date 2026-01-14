@@ -19,6 +19,7 @@ import json
 import uuid
 import base64
 import os
+import asyncio
 
 from app.db.local_db import LocalAsyncSession
 from app.models.local_models import (
@@ -85,6 +86,19 @@ class ReportEngine:
                 local_session.add(user_msg)
                 await local_session.flush()
                 
+                # 1.5. CHECK FOR & PROCESS NEW EVIDENCE (FAST VISION MODE - Stage A)
+                # Replaced heavy EvidenceProcessor with lightweight Grok Vision call
+                from app.models.local_models import LocalEvidence
+                
+                # 1.5. CHECK FOR & PROCESS NEW EVIDENCE (FAST VISION/AUDIO MODE)
+                # Replaced heavy EvidenceProcessor with lightweight Grok Vision call
+                from app.models.local_models import LocalEvidence
+                
+                ev_stmt = select(LocalEvidence).where(LocalEvidence.session_id == report_id).order_by(LocalEvidence.uploaded_at)
+                ev_result = await local_session.execute(ev_stmt)
+                evidence_items = ev_result.scalars().all()
+                evidence_items = list(evidence_items) # Ensure list
+
                 # 2. Build conversation history from local DB
                 stmt = select(LocalConversation).where(
                     LocalConversation.session_id == report_id
@@ -106,8 +120,48 @@ class ReportEngine:
 
                 current_state = {}
                 if state_tracking and state_tracking.context_data:
-                    current_state = state_tracking.context_data.get("extracted", {})
+                    current_state = dict(state_tracking.context_data.get("extracted", {}))
                 
+                # --- NEW EVIDENCE LOGIC ---
+                last_count = int(current_state.get("evidence_count", 0))
+                current_count = len(evidence_items)
+                
+                evidence_context_str = ""
+                
+                if current_count > last_count:
+                    print(f"[REPORT_ENGINE] New Evidence Detected: {current_count - last_count} new file(s)")
+                    new_items = evidence_items[last_count:]
+                    
+                    async def get_description(ev):
+                        try:
+                            mime = (ev.mime_type or "").lower()
+                            if mime.startswith("image"):
+                                desc = await LLMAgent.analyze_image_fast(ev.file_path)
+                                return f"Image: {desc}"
+                            elif mime.startswith("audio"):
+                                desc = await LLMAgent.analyze_audio_fast(ev.file_path)
+                                return f"Audio: {desc}"
+                            else:
+                                return f"File: {ev.file_name}"
+                        except Exception as e:
+                            print(f"[REPORT_ENGINE] Error analyzing {ev.file_path}: {e}")
+                            return f"File: {ev.file_name} (Analysis failed)"
+
+                    # Parallel Analysis
+                    descriptions = await asyncio.gather(*(get_description(ev) for ev in new_items))
+                    
+                    evidence_context_str = "; ".join(descriptions)
+                    
+                    # Update State Immediately
+                    current_state["evidence_count"] = current_count
+                    current_state["evidence"] = "Uploaded" # Mark evidence as provided
+                    
+                    # Persist this specific state update immediately so we don't re-process if LLM crashes
+                    new_context_data = dict(state_tracking.context_data or {})
+                    new_context_data["extracted"] = current_state
+                    state_tracking.context_data = new_context_data
+                    await local_session.flush()
+
                 # Convert to LLM format
                 conversation_history = []
                 for msg in history_objs:
@@ -119,8 +173,23 @@ class ReportEngine:
                         "content": msg.content
                     })
                 
+                # INJECT EVIDENCE CONTEXT (System Injection)
+                # ONLY inject if we just processed NEW evidence
+                if evidence_context_str:
+                    conversation_history.append({
+                         "role": "system",
+                         "content": f"[NEW EVIDENCE UPLOADED]\nAnalysis of files just uploaded: {evidence_context_str}"
+                    })
+
                 # 3. Forward to LLM (LLM is sole conversational authority)
                 # Pass current_state to LLM so it knows what it ALREADY confirmed
+                print(f"[REPORT_ENGINE] Calling LLMAgent.chat for report {report_id}...")
+                print(f"[REPORT_ENGINE] DEBUG: evidence_context_str = '{evidence_context_str}'")
+                print(f"[REPORT_ENGINE] DEBUG: Conversation history has {len(conversation_history)} messages. Last role: {conversation_history[-1]['role'] if conversation_history else 'N/A'}")
+                if evidence_context_str:
+                    print(f"[REPORT_ENGINE] DEBUG: System injection SHOULD be present. Verifying...")
+                    has_sys_injection = any("[NEW EVIDENCE UPLOADED]" in m.get("content", "") for m in conversation_history if m.get("role") == "system")
+                    print(f"[REPORT_ENGINE] DEBUG: has_sys_injection = {has_sys_injection}")
                 llm_response, new_extracted_data = await LLMAgent.chat(conversation_history, current_state)
                 print(f"[REPORT_ENGINE] LLM Response received: {len(llm_response)} chars, new_extracted={bool(new_extracted_data)}")
                 
@@ -159,12 +228,15 @@ class ReportEngine:
                 # Trigger submission ONLY if placeholder is detected in text
                 # This ensures the AI leads the conversation closure.
                 if "CASE_ID_PLACEHOLDER" in llm_response:
+                    import time
+                    start_sub = time.time()
                     next_step = "SUBMITTED"
                     
                     # Generate Incremental Case ID via CaseService
                     from app.services.case_service import CaseService
                     # We need a supabase session for reading existing max IDs
                     case_id = await CaseService.generate_next_case_id(supabase_session)
+                    print(f"[REPORT_ENGINE] Case ID generated in {time.time() - start_sub:.2f}s")
                     
                     # ---------------------------------------------------------
                     # GENERATE SECRET KEY (EARLY FOR REPLACEMENT)
@@ -182,14 +254,17 @@ class ReportEngine:
                     from app.core.time_utils import get_ist_now
                     reported_at_ist = get_ist_now()
                     
-                    # Gather evidence files (Phase 1: Attempt upload, log partial failures, but do not block)
+                    # Gather evidence files (Parallel Upload)
+                    ev_start = time.time()
                     evidence_files = await ReportEngine._upload_evidence_and_get_metadata(report_id, local_session)
+                    print(f"[REPORT_ENGINE] Evidence uploaded in {time.time() - ev_start:.2f}s")
                     
                     # ---------------------------------------------------------
                     # PHASE 1: INTAKE (FAIL-SAFE)
                     # Store Raw Data Immediately. No AI / Scoring here.
                     # ---------------------------------------------------------
 
+                    db_start = time.time()
                     beacon_row = Beacon(
                         reported_at=reported_at_ist,
                         case_id=case_id,
@@ -229,8 +304,9 @@ class ReportEngine:
                     # COMMIT INTELLIGENCE (RAW DATA)
                     await local_session.commit()
                     await supabase_session.commit()
+                    print(f"[REPORT_ENGINE] DB Commits in {time.time() - db_start:.2f}s")
                     
-                    print(f"[REPORT_ENGINE] ✅ Phase 1 Complete. Report {case_id} stored safely.")
+                    print(f"[REPORT_ENGINE] Total Phase 1 Complete in {time.time() - start_sub:.2f}s. Report {case_id} stored safely.")
 
                     # ---------------------------------------------------------
                     # PHASE 2: TRIGGER ASYNC ANALYSIS
@@ -238,9 +314,9 @@ class ReportEngine:
                     if background_tasks:
                         from app.services.scoring_service import ScoringService
                         background_tasks.add_task(ScoringService.run_background_scoring, report_id, case_id)
-                        print(f"[REPORT_ENGINE] 🚀 Phase 2 Triggered (Async Scoring) for {case_id}")
+                        print(f"[REPORT_ENGINE] Phase 2 Triggered (Async Scoring) for {case_id}")
                     else:
-                        print(f"[REPORT_ENGINE] ⚠️ No BackgroundTasks object! Phase 2 skipped (Manually trigger required).")
+                        print(f"[REPORT_ENGINE] No BackgroundTasks object! Phase 2 skipped (Manually trigger required).")
 
                 # Always commit local session (messages + state) for every turn
                 await local_session.commit()
@@ -256,7 +332,7 @@ class ReportEngine:
                 )
         
         except Exception as e:
-            print(f"[REPORT_ENGINE] ❌ ERROR processing message for {report_id}: {type(e).__name__}: {e}")
+            print(f"[REPORT_ENGINE] ERROR processing message for {report_id}: {type(e).__name__}: {e}")
             traceback.print_exc()
             
             # DEBUG: Write to file for agent visibility
@@ -273,34 +349,30 @@ class ReportEngine:
     @staticmethod
     async def _upload_evidence_and_get_metadata(session_id: str, local_session: AsyncSession) -> list:
         """
-        Uploads evidence files to Supabase Storage and returns metadata list.
+        Uploads evidence files to Supabase Storage in parallel and returns metadata list.
         """
         from app.services.storage_service import StorageService
-        
-        evidence_files = []
+        import asyncio
         
         stmt = select(LocalEvidence).where(LocalEvidence.session_id == session_id)
         result = await local_session.execute(stmt)
         evidence_objs = result.scalars().all()
         
-        for ev in evidence_objs:
+        if not evidence_objs:
+            return []
+
+        async def upload_single(ev):
             try:
                 with open(ev.file_path, "rb") as f:
                     file_bytes = f.read()
-                
-                # Upload to Supabase
-                upload_meta = await StorageService.upload_file(file_bytes, ev.file_name, ev.mime_type)
-                evidence_files.append(upload_meta)
-                
+                return await StorageService.upload_file(file_bytes, ev.file_name, ev.mime_type)
             except Exception as e:
                 print(f"[REPORT_ENGINE] Error uploading evidence file {ev.file_path}: {e}")
-                # Store error metadata
-                evidence_files.append({
-                    "file_name": ev.file_name,
-                    "error": str(e)
-                })
-        
-        return evidence_files
+                return {"file_name": ev.file_name, "error": str(e)}
+
+        # Run all uploads in parallel
+        results = await asyncio.gather(*(upload_single(ev) for ev in evidence_objs))
+        return list(results)
 
     @staticmethod
     async def initialize_report(report_id: str, access_token: str):
@@ -341,7 +413,7 @@ class ReportEngine:
             local_session.add(state_tracking)
             await local_session.commit()
             
-            print(f"[REPORT_ENGINE] ✅ Initialized local session: {report_id}")
+            print(f"[REPORT_ENGINE] Initialized local session: {report_id}")
 
     @staticmethod
     async def get_session_status(session_id: str) -> dict:

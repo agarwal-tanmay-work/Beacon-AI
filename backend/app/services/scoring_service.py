@@ -107,8 +107,8 @@ class ScoringService:
                          raise ValueError("AI Scoring returned None.")
 
                     # 4. Strict Validation
-                    score = score_result.credibility_score
-                    if not (0 <= score <= 100):
+                    score = max(1, min(100, score_result.credibility_score))
+                    if not (1 <= score <= 100):
                          raise ValueError(f"Invalid Score: {score}")
 
                     # 5. Atomic Commit

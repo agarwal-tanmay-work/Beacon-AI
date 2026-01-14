@@ -25,16 +25,16 @@ class Settings(BaseSettings):
         raise ValueError(v)
 
     # Database - defaults to Supabase, override via env for local dev
-    DATABASE_URL: str = "postgresql+asyncpg://user:pass@host:port/db"
+    DATABASE_URL: str = "postgresql+asyncpg://user:password@host:5432/database"
     
     # Supabase Storage & Client
     SUPABASE_URL: str = "https://your-project.supabase.co"
-    SUPABASE_KEY: str = "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+    SUPABASE_KEY: str = "your-supabase-key"
 
     # AI
     # AI
     GEMINI_API_KEY: str = ""
-    GROQ_API_KEY: str = "YOUR_GROQ_API_KEY"
+    GROQ_API_KEY: str = ""
     # IMPORTANT: Ensure this is set in backend_config.env or replaced here
 
     # Logging

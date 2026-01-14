@@ -1,94 +1,57 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React from "react";
 import { ChatInterface } from "@/components/features/ChatInterface";
-import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
 import { SparklesCore } from "@/components/ui/sparkles";
-import VaporizeTextCycle, { Tag } from "@/components/ui/vapour-text-effect";
+import { FireSphere } from "@/components/ui/fire-sphere";
 
 export default function ReportPage() {
+    React.useEffect(() => {
+        // Force resize for Three.js initialization
+        window.dispatchEvent(new Event('resize'));
+    }, []);
+
     return (
-        <div className="w-full min-h-screen bg-black text-white selection:bg-purple-500/30 relative flex flex-col items-center overflow-hidden">
+        <div className="w-full h-screen bg-black text-white relative flex flex-col items-center overflow-hidden font-sans selection:bg-blue-500/30">
             {/* Background Sparkles */}
             <div className="absolute inset-0 z-0">
                 <SparklesCore
                     id="report-sparkles"
                     background="transparent"
-                    minSize={0.4}
-                    maxSize={1.2}
-                    particleDensity={30}
+                    minSize={0.6}
+                    maxSize={1.4}
+                    particleDensity={60}
                     className="w-full h-full"
                     particleColor="#FFFFFF"
                 />
             </div>
 
-            <div className="relative z-10 w-full flex flex-col items-center gap-6 py-12 px-4">
-                {/* Header / Navigation */}
-                <div className="w-full max-w-4xl flex items-center justify-between mb-4">
-                    <Link
-                        href="/"
-                        className="group text-sm text-white/50 hover:text-white flex items-center gap-1 transition-all duration-300 bg-white/5 px-4 py-2 rounded-full border border-white/10 hover:border-white/20"
-                    >
-                        <ChevronLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-                        <span>Return to Safety</span>
-                    </Link>
+            {/* Fire Sphere Effect - Grounded at the bottom */}
+            <div className="absolute bottom-[-110px] left-0 w-full h-[400px] z-0 opacity-25 pointer-events-none">
+                <FireSphere
+                    color1={[201, 158, 72]}
+                    color0={[74, 30, 0]}
+                    bloomStrength={0.3}
+                    bloomRadius={0.8}
+                />
+            </div>
 
-                    <div className="hidden md:flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 text-[10px] text-white/40 font-mono tracking-widest uppercase">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        Direct Secure Uplink
-                    </div>
-                </div>
 
-                {/* Title Section */}
-                <div className="flex flex-col items-center justify-center mb-4">
-                    <div className="relative h-24 md:h-32 w-full flex flex-col items-center justify-center overflow-hidden rounded-md">
-                        <VaporizeTextCycle
-                            texts={useMemo(() => ["SECURE REPORTING"], [])}
-                            font={useMemo(() => ({
-                                fontFamily: "Inter, sans-serif",
-                                fontSize: "48px",
-                                fontWeight: 800,
-                            }), [])}
-                            color="rgba(255, 255, 255, 1)"
-                            spread={3}
-                            density={3}
-                            animation={useMemo(() => ({
-                                vaporizeDuration: 2,
-                                fadeInDuration: 1,
-                                waitDuration: 0.5,
-                            }), [])}
-                            direction="left-to-right"
-                            alignment="center"
-                            tag={Tag.H1}
-                            mode="continuous"
-                        />
-                    </div>
-
-                    {/* Subtle underline gradient */}
-                    <div className="w-64 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent mt-[-10px]" />
+            <div className="relative z-10 w-full flex-1 flex flex-col items-center pt-6 pb-8 px-4 max-w-7xl mx-auto overflow-hidden">
+                {/* Header */}
+                <div className="text-center mb-2 space-y-2 shrink-0">
+                    <h1 className="text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60 drop-shadow-2xl">
+                        Submit Report
+                    </h1>
+                    <div className="h-[2px] w-32 bg-gradient-to-r from-transparent via-blue-600 to-transparent mx-auto my-3 shadow-[0_0_15px_rgba(37,99,235,0.6)]" />
+                    <p className="text-blue-100/60 text-base font-normal tracking-wide">
+                        Document sensitive information securely and anonymously.
+                    </p>
                 </div>
 
                 {/* Chat Interface Container */}
-                <div className="w-full max-w-5xl flex justify-center">
+                <div className="w-full flex-1 flex flex-col min-h-0">
                     <ChatInterface />
-                </div>
-
-                {/* Footer Warning */}
-                <div className="mt-8 flex flex-col items-center gap-4">
-                    <p className="text-xs text-center text-white/30 max-w-md leading-relaxed">
-                        Do not close this window until you receive your secure <span className="text-white/60 font-semibold tracking-tight">Access Token</span>.
-                        <br />
-                        History is not saved on this device. Logs are wiped upon session termination.
-                    </p>
-
-                    <div className="w-full h-px bg-gradient-to-r from-transparent via-white/5 to-transparent mt-4" />
-
-                    <div className="flex items-center gap-6 text-[10px] text-white/20 font-mono uppercase tracking-[0.2em]">
-                        <span>AES-256</span>
-                        <span>End-to-End</span>
-                        <span>Zero-Knowledge</span>
-                    </div>
                 </div>
             </div>
         </div>

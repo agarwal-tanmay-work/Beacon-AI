@@ -15,6 +15,7 @@ body {
       rgb(var(--background-end-rgb))) rgb(var(--background-start-rgb));
   font-feature-settings: "ss01", "ss02", "cv01", "cv02";
   -webkit-font-smoothing: antialiased;
+  scroll-behavior: smooth;
 }
 
 @layer utilities {
@@ -41,14 +42,15 @@ body {
 }
 
 @theme inline {
-    --animate-accordion-down: accordion-down 0.2s ease-out;
-    --animate-accordion-up: accordion-up 0.2s ease-out;
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
 }
 
 @keyframes accordion-down {
   from {
     height: 0;
   }
+
   to {
     height: var(--radix-accordion-content-height);
   }
@@ -58,6 +60,7 @@ body {
   from {
     height: var(--radix-accordion-content-height);
   }
+
   to {
     height: 0;
   }
@@ -67,19 +70,24 @@ body {
   0% {
     transform: translateX(-100%);
   }
+
   50% {
     transform: translateX(100%);
   }
+
   100% {
     transform: translateX(-100%);
   }
 }
 
 @keyframes pulse-slow {
-   0%, 100% {
-       transform: translateX(-100%);
-   }
-   50% {
-       transform: translateX(100%);
-   }
+
+  0%,
+  100% {
+    transform: translateX(-100%);
+  }
+
+  50% {
+    transform: translateX(100%);
+  }
 }

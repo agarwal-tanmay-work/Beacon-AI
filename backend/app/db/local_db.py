@@ -22,8 +22,7 @@ LOCAL_DB_URL = f"sqlite+aiosqlite:///{LOCAL_DB_PATH}"
 local_engine = create_async_engine(
     LOCAL_DB_URL,
     echo=False,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
+    connect_args={"check_same_thread": False}
 )
 
 # Create Session Factory for Local DB

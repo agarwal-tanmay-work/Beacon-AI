@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Inbox, CheckCircle, FileText, Settings, Shield } from "lucide-react";
+import { LayoutDashboard, Inbox, CheckCircle, Clock, Shield, LogOut } from "lucide-react";
 import { clsx } from "clsx";
 
 const navigation = [
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
-    { name: "Incoming Reports", href: "/reports/incoming", icon: Inbox },
-    { name: "Verified Cases", href: "/reports/verified", icon: CheckCircle },
-    { name: "Evidence Vault", href: "/evidence", icon: FileText },
+    { name: "Pending", href: "/pending", icon: Inbox },
+    { name: "Ongoing", href: "/ongoing", icon: Clock },
+    { name: "Completed", href: "/completed", icon: CheckCircle },
 ];
 
 export function Sidebar() {
@@ -48,7 +48,7 @@ export function Sidebar() {
                 })}
             </nav>
             <div className="p-4 border-t border-border">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 mb-4">
                     <div className="h-8 w-8 rounded-full bg-accent/20 flex items-center justify-center">
                         <span className="text-xs font-bold text-accent">AD</span>
                     </div>
@@ -57,6 +57,18 @@ export function Sidebar() {
                         <span className="text-xs text-muted-foreground">Secure Access</span>
                     </div>
                 </div>
+
+                <button
+                    onClick={() => {
+                        sessionStorage.removeItem("ngo_token");
+                        sessionStorage.removeItem("ngo_user");
+                        window.location.href = "/login";
+                    }}
+                    className="flex w-full items-center gap-x-3 rounded-md p-2 text-sm font-semibold leading-6 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
+                >
+                    <LogOut className="h-5 w-5 shrink-0" />
+                    Sign Out
+                </button>
             </div>
         </div>
     );

@@ -31,14 +31,45 @@ class TrackStatusRequest(BaseModel):
     case_id: str
     secret_key: str
 
+class PublicUpdate(BaseModel):
+    message: str
+    timestamp: datetime
+
+class MessageAttachment(BaseModel):
+    file_name: str
+    file_path: str
+    mime_type: str
+
+class TrackMessage(BaseModel):
+    id: str
+    sender_role: str
+    content: Optional[str] = None
+    attachments: List[MessageAttachment] = []
+    timestamp: datetime
+
 class TrackStatusResponse(BaseModel):
     status: str
+    reported_at: datetime
+    incident_summary: Optional[str] = None
     last_updated: datetime
-    public_update: Optional[str] = None
+    updates: List[PublicUpdate] = []
+    messages: List[TrackMessage] = []
+
+class TrackMessageRequest(BaseModel):
+    case_id: str
+    secret_key: str
+    content: Optional[str] = None
+    attachments: List[MessageAttachment] = []
+
+class SecureUploadResponse(BaseModel):
+    file_name: str
+    file_path: str
+    mime_type: str
 
 class NGOUpdateRequest(BaseModel):
     raw_update: str
     updated_by: Optional[str] = "NGO_ADMIN"
+    status: Optional[str] = None
 
 class NGOUpdateResponse(BaseModel):
     status: str

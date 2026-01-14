@@ -8,6 +8,13 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "Beacon AI",
   description: "Secure Anti-Corruption Reporting",
+  icons: {
+    icon: [
+      { url: "/favicon-final.png", type: "image/png", sizes: "any" },
+    ],
+    shortcut: ["/favicon-final.png"],
+    apple: ["/favicon-final.png"],
+  },
 };
 
 import { AppNavBar } from "@/components/ui/app-navbar";
@@ -31,7 +38,7 @@ export default function RootLayout({
         <PixelCursorTrail />
         <AppNavBar />
         <AuroraBackground />
-        <main className="min-h-screen flex flex-col items-center justify-center p-0 overflow-x-hidden">
+        <main className="min-h-screen flex flex-col items-center p-0 overflow-x-hidden">
           {children}
         </main>
       </body>

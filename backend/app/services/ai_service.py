@@ -18,7 +18,7 @@ class GroqService:
     
     BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
     TIMEOUT = 60.0 
-    TEXT_MODEL = "llama-3.3-70b-versatile"
+    TEXT_MODEL = "llama-3.1-8b-instant"
     VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
     @classmethod
@@ -293,12 +293,24 @@ Keep it neutral. Example: 'Uniformed officer standing on a road next to a vehicl
             "content": (
                 "Write a professional intelligence summary of this report. "
                 "Preserve details (dates, names, amounts). Anonymize the reporter. "
-                "No fluff. Just the facts.\n\n"
+                "No fluff. Just the facts. "
+                "CRITICAL: Do NOT include a title, header, or prefix like 'Intelligence Summary:'. "
+                "Start directly with the summary content.\n\n"
                 f"Log:\n{conversation_text}"
             )
         }]
         result = await cls._call_groq(messages)
-        return str(result)
+        if not result:
+            return "No summary generated."
+            
+        summary = str(result).strip()
+        # Cleanup: Forcefully remove common prefixes if the LLM ignores instructions
+        prefixes_to_strip = ["Intelligence Summary:", "Summary:", "Report Summary:"]
+        for prefix in prefixes_to_strip:
+            if summary.startswith(prefix):
+                summary = summary[len(prefix):].strip()
+        
+        return summary
 
     @classmethod
     async def calculate_credibility_score(
