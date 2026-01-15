@@ -5,6 +5,9 @@ from app.core.config import settings
 # Create Async Engine
 # For Supabase/PostgreSQL with asyncpg, SSL is specified in the URL, not connect_args
 db_url = settings.DATABASE_URL
+if db_url.startswith("postgresql://"):
+     db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
 if "supabase" in db_url and "ssl=" not in db_url:
     # Add SSL requirement to URL for asyncpg
     db_url = db_url + ("&" if "?" in db_url else "?") + "ssl=require"
