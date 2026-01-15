@@ -13,7 +13,7 @@ class StorageService:
     """
     
     _client: Optional[Client] = None
-    BUCKET_NAME = "evidence-files"
+    BUCKET_NAME = "evidence"
 
     @classmethod
     def get_client(cls) -> Client:

@@ -12,11 +12,18 @@ if "supabase" in db_url and "ssl=" not in db_url:
     # Add SSL requirement to URL for asyncpg
     db_url = db_url + ("&" if "?" in db_url else "?") + "ssl=require"
 
+# Configure connection args
+connect_args = {}
+# If using Supabase Transaction Pooler (port 6543), we must disable prepared statements
+if ":6543" in db_url:
+    connect_args["statement_cache_size"] = 0
+
 engine = create_async_engine(
     db_url,
     echo=settings.ENVIRONMENT == "development",
     future=True,
-    poolclass=NullPool,  # Fixes asyncpg concurrency/connection issues
+    poolclass=NullPool,
+    connect_args=connect_args,
 )
 
 # Create Session Factory
