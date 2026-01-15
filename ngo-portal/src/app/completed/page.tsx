@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { clsx } from "clsx";
-import { format } from "date-fns";
+import { formatToIST } from "@/lib/utils";
 
 type ReportStatus = 'Pending' | 'Ongoing' | 'Completed';
 type ReportPriority = 'Low' | 'Medium' | 'High';
@@ -32,9 +32,9 @@ export default function CompletedReports() {
             const allReports: Report[] = res.data;
             setReports(allReports.filter(r => r.status === 'Completed'));
             setError(null);
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error(err);
-            if (err.response?.status !== 401) {
+            if (err && typeof err === 'object' && 'response' in err && (err as { response: { status: number } }).response.status !== 401) {
                 setError("Failed to load reports.");
             }
         } finally {
@@ -137,7 +137,7 @@ export default function CompletedReports() {
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 text-muted-foreground">
-                                            {format(new Date(report.created_at), 'MMM d, yyyy HH:mm')}
+                                            {formatToIST(report.created_at)}
                                         </td>
                                         <td className="px-6 py-4">
                                             <span className={clsx("inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset", getStatusColor(report.status))}>

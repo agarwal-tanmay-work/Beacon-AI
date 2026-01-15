@@ -61,8 +61,5 @@ async def handle_message(
         )
         return response
     except Exception as e:
-        import traceback
-        error_msg = f"Error in handle_message: {str(e)}\n{traceback.format_exc()}"
-        print(error_msg)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 

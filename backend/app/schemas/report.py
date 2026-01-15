@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List, Dict, Any
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from app.models.report import ReportStatus, SenderType
 
 class CreateReportRequest(BaseModel):
@@ -22,10 +22,17 @@ class MessageResponse(BaseModel):
     report_id: UUID
     sender: SenderType
     content: str
-    timestamp: datetime
+    timestamp: Any
     next_step: Optional[str] = None
     case_id: Optional[str] = None  # BCN + 12 digits, present when submitted
     secret_key: Optional[str] = None # Present ONLY once on submission
+
+    @validator("timestamp", pre=True)
+    def ensure_utc(cls, v):
+        if isinstance(v, datetime):
+            if v.tzinfo is None: v = v.replace(tzinfo=timezone.utc)
+            return v.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        return v
 
 class TrackStatusRequest(BaseModel):
     case_id: str
@@ -33,7 +40,14 @@ class TrackStatusRequest(BaseModel):
 
 class PublicUpdate(BaseModel):
     message: str
-    timestamp: datetime
+    timestamp: Any
+
+    @validator("timestamp", pre=True)
+    def ensure_utc(cls, v):
+        if isinstance(v, datetime):
+            if v.tzinfo is None: v = v.replace(tzinfo=timezone.utc)
+            return v.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        return v
 
 class MessageAttachment(BaseModel):
     file_name: str
@@ -45,15 +59,29 @@ class TrackMessage(BaseModel):
     sender_role: str
     content: Optional[str] = None
     attachments: List[MessageAttachment] = []
-    timestamp: datetime
+    timestamp: Any
+
+    @validator("timestamp", pre=True)
+    def ensure_utc(cls, v):
+        if isinstance(v, datetime):
+            if v.tzinfo is None: v = v.replace(tzinfo=timezone.utc)
+            return v.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        return v
 
 class TrackStatusResponse(BaseModel):
     status: str
-    reported_at: datetime
+    reported_at: Any
     incident_summary: Optional[str] = None
-    last_updated: datetime
+    last_updated: Any
     updates: List[PublicUpdate] = []
     messages: List[TrackMessage] = []
+
+    @validator("reported_at", "last_updated", pre=True)
+    def ensure_utc(cls, v):
+        if isinstance(v, datetime):
+            if v.tzinfo is None: v = v.replace(tzinfo=timezone.utc)
+            return v.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        return v
 
 class TrackMessageRequest(BaseModel):
     case_id: str
@@ -74,5 +102,12 @@ class NGOUpdateRequest(BaseModel):
 class NGOUpdateResponse(BaseModel):
     status: str
     public_update: str
-    timestamp: datetime
+    timestamp: Any
+
+    @validator("timestamp", pre=True)
+    def ensure_utc(cls, v):
+        if isinstance(v, datetime):
+            if v.tzinfo is None: v = v.replace(tzinfo=timezone.utc)
+            return v.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        return v
 

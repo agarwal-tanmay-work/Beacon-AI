@@ -1,11 +1,12 @@
 "use client";
+// Force Refresh for Timezone Fix
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { ArrowLeft, Send, Clock, CheckCircle2, AlertTriangle, FileText, Shield, User, MapPin, Calendar, Paperclip, ChevronDown } from "lucide-react";
-import { format } from "date-fns";
+import { ArrowLeft, Send, Clock, AlertTriangle, FileText, ChevronDown, Shield, Paperclip } from "lucide-react";
 import { clsx } from "clsx";
+import { formatToIST } from "@/lib/utils";
 
 interface EvidenceFile {
     file_name: string;
@@ -69,44 +70,35 @@ export default function CaseDetailPage() {
     const [messageInput, setMessageInput] = useState("");
     const [sending, setSending] = useState(false);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
-    const [fileUploading, setFileUploading] = useState(false);
 
     // Update form
     const [updateText, setUpdateText] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [submitSuccess, setSubmitSuccess] = useState(false);
 
-    const fetchCaseData = async () => {
+    const fetchCaseData = useCallback(async () => {
         try {
-            const res = await api.get(`/admin/reports/${caseId}`);
-            setCaseData(res.data);
+            // Parallelize fetches for better performance
+            const [reportRes, msgRes] = await Promise.all([
+                api.get(`/admin/reports/${caseId}`),
+                api.get(`/admin/reports/${caseId}/messages`)
+            ]);
 
-            // Also fetch messages
-            const msgRes = await api.get(`/admin/reports/${caseId}/messages`);
+            setCaseData(reportRes.data);
             setMessages(msgRes.data);
-
-            // Note: For now updates are local state or separate endpoint if we had one. 
-            // In a real app we'd fetch /updates. I'll separate them from local state if possible. 
-            // Assuming no persistence for updates in this demo unless I added it? 
-            // The requirement says "Display all case updates... stored in database".
-            // I'll leave valid updates logic if I can find where they come from.
-            // For now, I will simulate updates persistence or they might be lost on refresh if backend doesn't serve them.
-            // *Correction*: The backend `Beacon` model has `last_framed_status`. 
-            // But strict requirement says "Display all case updates". 
-            // I'll keep the existing frontend logic for updates which seemed to assume local or some other fetch.
         } catch (err) {
             console.error(err);
             setError("Failed to load case details or messages");
         } finally {
             setLoading(false);
         }
-    };
+    }, [caseId]);
 
     useEffect(() => {
         fetchCaseData();
         const interval = setInterval(fetchCaseData, 30000);
         return () => clearInterval(interval);
-    }, [caseId]);
+    }, [caseId, fetchCaseData]);
 
     const handleStatusChange = async (newStatus: string) => {
         if (!caseData) return;
@@ -128,10 +120,9 @@ export default function CaseDetailPage() {
         setSending(true);
 
         try {
-            let attachments: MessageAttachment[] = [];
+            const attachments: MessageAttachment[] = [];
 
             if (selectedFile) {
-                setFileUploading(true);
                 const formData = new FormData();
                 formData.append("file", selectedFile);
                 const uploadRes = await api.post(`/admin/reports/${caseId}/upload`, formData, {
@@ -142,7 +133,6 @@ export default function CaseDetailPage() {
                     file_path: uploadRes.data.file_path,
                     mime_type: uploadRes.data.mime_type
                 });
-                setFileUploading(false);
             }
 
             await api.post(`/admin/reports/${caseId}/message`, {
@@ -160,7 +150,6 @@ export default function CaseDetailPage() {
             alert("Failed to send message");
         } finally {
             setSending(false);
-            setFileUploading(false);
         }
     };
 
@@ -239,13 +228,16 @@ export default function CaseDetailPage() {
                                 {['Pending', 'Ongoing', 'Completed'].map(s => (
                                     <button
                                         key={s}
+                                        disabled={statusLoading}
                                         onClick={() => handleStatusChange(s)}
                                         className={clsx(
-                                            "text-left px-3 py-2 rounded hover:bg-white/10 text-sm",
-                                            caseData.status === s ? "text-primary font-bold" : "text-gray-300"
+                                            "text-left px-3 py-2 rounded hover:bg-white/10 text-sm flex items-center justify-between",
+                                            caseData.status === s ? "text-primary font-bold" : "text-gray-300",
+                                            statusLoading && "opacity-50 cursor-not-allowed"
                                         )}
                                     >
                                         {s}
+                                        {statusLoading && s === caseData.status && <Clock className="w-3 h-3 animate-spin" />}
                                     </button>
                                 ))}
                             </div>
@@ -272,7 +264,7 @@ export default function CaseDetailPage() {
                 {/* Reported On */}
                 <div className="p-4 bg-card border border-border rounded-xl">
                     <span className="text-muted-foreground text-xs uppercase tracking-wider">Reported On</span>
-                    <div className="text-lg text-white mt-1">{format(new Date(caseData.created_at), 'PPP')}</div>
+                    <div className="text-sm text-white mt-1">{formatToIST(caseData.created_at)}</div>
                 </div>
             </div>
 
@@ -332,7 +324,7 @@ export default function CaseDetailPage() {
                                                     {msg.attachments.map((att, idx) => (
                                                         <a
                                                             key={idx}
-                                                            href={`http://localhost:8000/${att.file_path}`}
+                                                            href={`${process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '')}/${att.file_path}`}
                                                             target="_blank"
                                                             rel="noopener noreferrer"
                                                             className="flex items-center gap-2 text-xs bg-black/20 p-2 rounded hover:bg-black/40 transition-colors"
@@ -345,7 +337,7 @@ export default function CaseDetailPage() {
                                             )}
                                         </div>
                                         <span className="text-[10px] text-muted-foreground mt-1">
-                                            {msg.sender_role === 'ngo' ? "You" : "USER"} • {format(new Date(msg.timestamp), 'h:mm a')}
+                                            {msg.sender_role === 'ngo' ? "You" : "USER"} • {formatToIST(msg.timestamp, { hour: undefined, minute: undefined, day: '2-digit', month: 'short', year: 'numeric' })}
                                         </span>
                                     </div>
                                 ))
@@ -480,7 +472,7 @@ export default function CaseDetailPage() {
                                     <div key={update.id} className="relative pl-4 border-l border-white/10 pb-1">
                                         <div className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-primary ring-4 ring-background"></div>
                                         <p className="text-sm text-white">{update.public_update}</p>
-                                        <p className="text-xs text-muted-foreground mt-1">{format(new Date(update.created_at), 'MMM d, h:mm a')}</p>
+                                        <p className="text-xs text-muted-foreground mt-1">{formatToIST(update.created_at, { hour: undefined, minute: undefined })}</p>
                                     </div>
                                 ))}
                             </div>

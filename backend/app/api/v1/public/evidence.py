@@ -4,6 +4,7 @@ import os
 import uuid
 import hashlib
 from datetime import datetime
+from supabase import create_client, Client
 
 from app.db.local_db import LocalAsyncSession
 from app.models.local_models import LocalEvidence
@@ -34,10 +35,41 @@ async def upload_evidence(
         # Save to local uploads folder
         file_ext = os.path.splitext(file.filename)[1]
         unique_filename = f"{uuid.uuid4()}{file_ext}"
-        file_path = os.path.join(UPLOAD_DIR, unique_filename)
+        file_path = ""
         
-        with open(file_path, "wb") as f:
-            f.write(content)
+        # PRODUCTION: Upload to Supabase Storage if configured
+        if settings.SUPABASE_URL and settings.SUPABASE_KEY and settings.ENVIRONMENT != "local_dev":
+            try:
+                supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+                bucket_name = "evidence"
+                # Read file content again if needed (but we have 'content')
+                
+                # Upload
+                res = supabase.storage.from_(bucket_name).upload(
+                    path=unique_filename,
+                    file=content,
+                    file_options={"content-type": file.content_type}
+                )
+                
+                # Get Public URL (or keep private path)
+                # file_path = supabase.storage.from_(bucket_name).get_public_url(unique_filename)
+                # Ideally, store the storage reference
+                file_path = f"supastorage://{bucket_name}/{unique_filename}"
+                print(f"[UPLOAD] Uploaded to Supabase: {file_path}")
+                
+            except Exception as sup_err:
+                print(f"[UPLOAD] Supabase Upload Failed: {sup_err}. Falling back to local.")
+                # Fallback to local if Supabase fails (or if we want hybrid)
+                local_path = os.path.join(UPLOAD_DIR, unique_filename)
+                with open(local_path, "wb") as f:
+                    f.write(content)
+                file_path = os.path.abspath(local_path)
+        else:
+            # DEV: Local Storage
+            local_path = os.path.join(UPLOAD_DIR, unique_filename)
+            with open(local_path, "wb") as f:
+                f.write(content)
+            file_path = os.path.abspath(local_path)
             
         # Track in local SQLite
         async with LocalAsyncSession() as session:

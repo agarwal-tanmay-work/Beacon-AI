@@ -27,8 +27,9 @@ async def lifespan(app: FastAPI):
     Lifecycle manager for the application.
     Initializes local SQLite database for staging data.
     """
+    from app.db.local_db import init_local_db
+    await init_local_db()
     logger.info("startup", project=settings.PROJECT_NAME)
-    print(f"[STARTUP] Allowed CORS Origins: {settings.CORS_ORIGINS}")
     yield
     logger.info("shutdown")
 
@@ -51,15 +52,25 @@ app.add_middleware(
 )
 
 # Exception Handlers
-app.add_exception_handler(Exception, global_exception_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 @app.exception_handler(Exception)
-async def debug_exception_handler(request: Request, exc: Exception):
+async def unified_exception_handler(request: Request, exc: Exception):
+    # Log the full error always internally
+    logger.error("unhandled_exception", error=str(exc), path=request.url.path, stack=traceback.format_exc())
+    
+    if settings.ENVIRONMENT == "development":
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": str(exc),
+                "traceback": traceback.format_exc()
+            },
+        )
     return JSONResponse(
         status_code=500,
-        content={"detail": f"{str(exc)}\n{traceback.format_exc()}"},
+        content={"detail": "An internal server error occurred. Please contact support."},
     )
 
 # Health Check

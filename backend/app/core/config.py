@@ -1,10 +1,10 @@
 from typing import List, Union
-from pydantic import AnyHttpUrl, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Beacon AI"
-    ENVIRONMENT: str = "development"
+    ENVIRONMENT: str = "production"
     API_V1_STR: str = "/api/v1"
     
     # Security
@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
-        if isinstance(v, str):
+        if isinstance(v, str) and not v.startswith("["):
+            return [i.strip() for i in v.split(",")]
+        elif isinstance(v, str):
             v = v.strip("[").strip("]").strip('"').strip("'")
             if not v:
                 return []
@@ -24,21 +26,20 @@ class Settings(BaseSettings):
             return v
         raise ValueError(v)
 
-    # Database - defaults to Supabase, override via env for local dev
-    DATABASE_URL: str = "postgresql+asyncpg://user:password@host:5432/database"
+    # Database
+    DATABASE_URL: str
     
     # Supabase Storage & Client
-    SUPABASE_URL: str = "https://your-project.supabase.co"
-    SUPABASE_KEY: str = "your-supabase-key"
+    SUPABASE_URL: str
+    SUPABASE_KEY: str
 
     # AI
-    # AI
     GEMINI_API_KEY: str = ""
-    GROQ_API_KEY: str = ""
-    # IMPORTANT: Ensure this is set in backend_config.env or replaced here
+    GROQ_API_KEY: str
 
     # Logging
     LOG_LEVEL: str = "INFO"
+
 
     model_config = SettingsConfigDict(
         case_sensitive=True,

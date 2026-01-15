@@ -30,13 +30,10 @@ Thumbs.db
 
 # Project specific
 backend/venv/
-backend/venv_*/
 backend/.env
 frontend/.env.local
 backend/backend_config.env
-backend/tests/
+
+# Additional ignores
 backend/uploads/
-*.backup
-*.bak
-*.txt
-db_check.txt
+venv_fresh/

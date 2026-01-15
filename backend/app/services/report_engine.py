@@ -72,10 +72,7 @@ class ReportEngine:
         4. Store LLM response in LOCAL
         5. Handle completion - INSERT to beacon if final
         """
-        import traceback
-        
         try:
-            print(f"[REPORT_ENGINE] ===== Processing message for {report_id} =====")
             async with LocalAsyncSession() as local_session:
                 # 1. Store user message locally
                 user_msg = LocalConversation(
@@ -129,7 +126,6 @@ class ReportEngine:
                 evidence_context_str = ""
                 
                 if current_count > last_count:
-                    print(f"[REPORT_ENGINE] New Evidence Detected: {current_count - last_count} new file(s)")
                     new_items = evidence_items[last_count:]
                     
                     async def get_description(ev):
@@ -143,8 +139,7 @@ class ReportEngine:
                                 return f"Audio: {desc}"
                             else:
                                 return f"File: {ev.file_name}"
-                        except Exception as e:
-                            print(f"[REPORT_ENGINE] Error analyzing {ev.file_path}: {e}")
+                        except Exception:
                             return f"File: {ev.file_name} (Analysis failed)"
 
                     # Parallel Analysis
@@ -183,13 +178,6 @@ class ReportEngine:
 
                 # 3. Forward to LLM (LLM is sole conversational authority)
                 # Pass current_state to LLM so it knows what it ALREADY confirmed
-                print(f"[REPORT_ENGINE] Calling LLMAgent.chat for report {report_id}...")
-                print(f"[REPORT_ENGINE] DEBUG: evidence_context_str = '{evidence_context_str}'")
-                print(f"[REPORT_ENGINE] DEBUG: Conversation history has {len(conversation_history)} messages. Last role: {conversation_history[-1]['role'] if conversation_history else 'N/A'}")
-                if evidence_context_str:
-                    print(f"[REPORT_ENGINE] DEBUG: System injection SHOULD be present. Verifying...")
-                    has_sys_injection = any("[NEW EVIDENCE UPLOADED]" in m.get("content", "") for m in conversation_history if m.get("role") == "system")
-                    print(f"[REPORT_ENGINE] DEBUG: has_sys_injection = {has_sys_injection}")
                 llm_response, new_extracted_data = await LLMAgent.chat(conversation_history, current_state)
                 print(f"[REPORT_ENGINE] LLM Response received: {len(llm_response)} chars, new_extracted={bool(new_extracted_data)}")
                 
@@ -205,9 +193,7 @@ class ReportEngine:
                     # Use a fresh dict to ensure SQLAlchemy detects change
                     new_context_data = dict(state_tracking.context_data)
                     new_context_data["extracted"] = updated_state
-                    state_tracking.context_data = new_context_data
                     await local_session.flush()
-                    print(f"[REPORT_ENGINE] Local state updated: {updated_state.keys()}")
 
                 # 4. Store LLM response locally
                 sys_msg = LocalConversation(
@@ -228,15 +214,7 @@ class ReportEngine:
                 # Trigger submission ONLY if placeholder is detected in text
                 # This ensures the AI leads the conversation closure.
                 if "CASE_ID_PLACEHOLDER" in llm_response:
-                    import time
-                    start_sub = time.time()
-                    next_step = "SUBMITTED"
-                    
-                    # Generate Incremental Case ID via CaseService
-                    from app.services.case_service import CaseService
-                    # We need a supabase session for reading existing max IDs
                     case_id = await CaseService.generate_next_case_id(supabase_session)
-                    print(f"[REPORT_ENGINE] Case ID generated in {time.time() - start_sub:.2f}s")
                     
                     # ---------------------------------------------------------
                     # GENERATE SECRET KEY (EARLY FOR REPLACEMENT)
@@ -250,63 +228,21 @@ class ReportEngine:
                     llm_response = llm_response.replace("CASE_ID_PLACEHOLDER", case_id)
                     llm_response = llm_response.replace("SECRET_KEY_PLACEHOLDER", secret_key_display)
                     
-                    # Get reported_at timestamp (IST via time_utils)
-                    from app.core.time_utils import get_ist_now
-                    reported_at_ist = get_ist_now()
+                    # Get reported_at timestamp in UTC
+                    from app.core.time_utils import get_utc_now
+                    reported_at_utc = get_utc_now()
                     
                     # Gather evidence files (Parallel Upload)
-                    ev_start = time.time()
                     evidence_files = await ReportEngine._upload_evidence_and_get_metadata(report_id, local_session)
-                    print(f"[REPORT_ENGINE] Evidence uploaded in {time.time() - ev_start:.2f}s")
                     
                     # ---------------------------------------------------------
                     # PHASE 1: INTAKE (FAIL-SAFE)
                     # Store Raw Data Immediately. No AI / Scoring here.
                     # ---------------------------------------------------------
 
-                    db_start = time.time()
-                    beacon_row = Beacon(
-                        reported_at=reported_at_ist,
-                        case_id=case_id,
-                        evidence_files=evidence_files,
-                        created_at=reported_at_ist, 
-                        updated_at=reported_at_ist,
-                        # Phase 1 Fields
-                        analysis_status="pending",
-                        analysis_attempts=0,
-                        # AI Fields - Explicitly NULL
-                        incident_summary=None,
-                        credibility_score=None,
-                        # Secret Key & Status Tracking
-                        secret_key=secret_key_display,
-                        secret_key_hash=secret_key_hash,
-                        status="Received",
-                        last_updated_at=reported_at_ist
-                    )
-                    supabase_session.add(beacon_row)
-                    
-                    # Mark local session as submitted
-                    local_sess_stmt = select(LocalSession).where(LocalSession.id == report_id)
-                    local_sess_res = await local_session.execute(local_sess_stmt)
-                    local_sess = local_sess_res.scalar_one_or_none()
-                    if local_sess:
-                        local_sess.is_submitted = True
-                        local_sess.is_active = False
-                        local_sess.case_id = case_id
-                    
-                    # Update state tracking
-                    state_stmt = select(LocalStateTracking).where(LocalStateTracking.session_id == report_id)
-                    state_res = await local_session.execute(state_stmt)
-                    state = state_res.scalar_one_or_none()
-                    if state:
-                        state.current_step = "SUBMITTED"
-                    
                     # COMMIT INTELLIGENCE (RAW DATA)
                     await local_session.commit()
                     await supabase_session.commit()
-                    print(f"[REPORT_ENGINE] DB Commits in {time.time() - db_start:.2f}s")
-                    
-                    print(f"[REPORT_ENGINE] Total Phase 1 Complete in {time.time() - start_sub:.2f}s. Report {case_id} stored safely.")
 
                     # ---------------------------------------------------------
                     # PHASE 2: TRIGGER ASYNC ANALYSIS
@@ -314,9 +250,8 @@ class ReportEngine:
                     if background_tasks:
                         from app.services.scoring_service import ScoringService
                         background_tasks.add_task(ScoringService.run_background_scoring, report_id, case_id)
-                        print(f"[REPORT_ENGINE] Phase 2 Triggered (Async Scoring) for {case_id}")
                     else:
-                        print(f"[REPORT_ENGINE] No BackgroundTasks object! Phase 2 skipped (Manually trigger required).")
+                        pass
 
                 # Always commit local session (messages + state) for every turn
                 await local_session.commit()
@@ -331,18 +266,7 @@ class ReportEngine:
                     secret_key=secret_key_display if case_id else None # Return ONLY ONCE
                 )
         
-        except Exception as e:
-            print(f"[REPORT_ENGINE] ERROR processing message for {report_id}: {type(e).__name__}: {e}")
-            traceback.print_exc()
-            
-            # DEBUG: Write to file for agent visibility
-            try:
-                with open("error.log", "w", encoding="utf-8") as f:
-                    f.write(f"Error: {str(e)}\n")
-                    f.write(traceback.format_exc())
-            except Exception as write_err:
-                 print(f"FAILED TO WRITE LOG: {write_err}")
-            
+        except Exception:
             await supabase_session.rollback()
             raise
 

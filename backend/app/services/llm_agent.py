@@ -93,6 +93,12 @@ You must gather the following **five details**, one at a time:
 5. EVIDENCE  
    Whether any evidence exists, with a short description.
 
+6. CONTACT INFO (OPTIONAL)
+   Ask if they would like to provide contact details or stay anonymous.
+
+7. OTHER DETAILS
+   Finally, ask if there's anything else they'd like to share before finishing.
+
 ────────────────────────────────
 🧭 CONVERSATION RULES (CRITICAL)
 ────────────────────────────────
@@ -135,7 +141,7 @@ At the top of the conversation, there is a [CONFIRMED FACTS] block.
 🧾 FINALIZATION BEHAVIOR
 ────────────────────────────────
 
-Once ALL five details are confidently gathered, say EXACTLY this:
+Once ALL SEVEN details are gathered, say EXACTLY this:
 
 "Thank you for your courage in reporting this. Your Case ID is CASE_ID_PLACEHOLDER. Your Secret Key is SECRET_KEY_PLACEHOLDER. Please save these details to track your case. We will investigate and take appropriate action. You've done the right thing by speaking up."
 
@@ -174,10 +180,8 @@ class LLMAgent:
     
     @staticmethod
     async def chat(conversation_history: list, current_state: dict = None) -> Tuple[str, Optional[dict]]:
-        print(f"[LLM_AGENT] Starting chat for session. History length: {len(conversation_history)}")
         api_key = settings.GROQ_API_KEY
         if not api_key:
-            print("[LLM_AGENT] No API Key found. Using Mock Fallback.")
             return await LLMAgent._mock_chat(conversation_history, current_state)
 
         # 1. LOCAL FACT SCRAPER (Safety Net)
@@ -255,11 +259,9 @@ class LLMAgent:
                  next_missing = "Time/Date"
             # ENFORCE STRICT TIME CHECK: If we have a value but NO time, force ask again
             elif state.get("when") and not re.search(r'\d{1,2}:\d{2}|am|pm|morning|evening|night|afternoon|noon', str(state["when"]), re.IGNORECASE):
-                 print(f"[LLM_AGENT] DEBUG: Strict Time Check Triggered. Current 'when': {state['when']}")
                  next_missing = "Time (Missing)"
             # ENFORCE STRICT DATE CHECK: If we have time but no date
             elif state.get("when") and not re.search(r'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2}/|\d{4}|yesterday|today|tomorrow', str(state["when"]), re.IGNORECASE):
-                 print(f"[LLM_AGENT] DEBUG: Strict Date Check Triggered. Current 'when': {state['when']}")
                  next_missing = "Date (Missing)"
             elif not state.get("who"):
                 next_missing = "Who (Offender)"
@@ -268,35 +270,42 @@ class LLMAgent:
             # NEW STEP: Contact Info (Explicitly Optional)
             elif not state.get("contact_info_asked"):
                 next_missing = "Optional Contact Info"
+            # NEW STEP: Other Details
+            elif not state.get("other_details_asked"):
+                next_missing = "Other Details"
             # NEW STEP: Final Confirmation
             elif not state.get("final_confirmation_asked"):
                 next_missing = "Final Confirmation"
             else:
                 next_missing = "COMPLETE"
         
-        print(f"[LLM_AGENT] DEBUG: Calculated next_missing = {next_missing}")
-
         # 5. PROGRAMMATIC BYPASS (ANONYMITY & REFUSAL)
         last_msg_content = conversation_history[-1]["content"].lower() if conversation_history else ""
         refusal_keywords = ["anonymous", "no thanks", "no", "skip", "don't want", "dont want", "not now", "no i dont", "no i don't"]
         
         if "optional" in next_missing.lower() or next_missing == "COMPLETE" or next_missing == "Final Confirmation":
-             if any(k in last_msg_content for k in refusal_keywords):
-                 # If user refuses contact, mark it and move to final confirmation
-                 if "contact" in next_missing.lower():
-                     state["contact_info_asked"] = True
-                     state["contact_info"] = "Anonymous"
-                     return "Understood. Your report will remain anonymous. Is there anything else you would like to add before I finalize?", state
-                 
-                 # If user confirms they have nothing else to add, finalize
-                 closing_text = """Thank you for your courage.
+            if any(k in last_msg_content for k in refusal_keywords):
+                # If user refuses contact, mark it and move to other details
+                if "contact" in next_missing.lower():
+                    state["contact_info_asked"] = True
+                    state["contact_info"] = "Anonymous"
+                    return "Understood. Your report will remain anonymous. Is there anything else you would like to share or any other details you'd like to provide before I finish?", state
+                
+                # If user refuses other details, move to final confirmation
+                if "other" in next_missing.lower():
+                    state["other_details_asked"] = True
+                    state["other_details"] = "None"
+                    return "I understand. Is there anything else you would like to add before I finalize your report?", state
+
+                # If user confirms they have nothing else to add, finalize
+                closing_text = """Thank you for your courage.
 Your Case ID is: CASE_ID_PLACEHOLDER
 Your Secret Key is: SECRET_KEY_PLACEHOLDER
 
 IMPORTANT: Please save this Case ID and Secret Key safely. You will need them to check your case status. We cannot recover them if lost.
 
 We will investigate and take appropriate action. You've done the right thing by speaking up."""
-                 return closing_text, state
+                return closing_text, state
 
         # 6. Construct Payload
         payload = {
@@ -315,8 +324,6 @@ We will investigate and take appropriate action. You've done the right thing by 
         max_retries = 2
         for attempt in range(max_retries + 1):
             try:
-                print(f"[LLM_AGENT] Attempt {attempt+1}/{max_retries+1} sending request to {LLMAgent.GROQ_API_URL}...")
-                
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
                         LLMAgent.GROQ_API_URL, json=payload, headers=headers, timeout=30.0
@@ -325,7 +332,6 @@ We will investigate and take appropriate action. You've done the right thing by 
                     if response.status_code == 200:
                         data = response.json()
                         text_response = data["choices"][0]["message"]["content"]
-                        print(f"[LLM_AGENT] Success. Raw Response length: {len(text_response)}")
                         
                         # 5. Extract fresh JSON from AI (Renumbering for consistency)
                         fresh_extracted = LLMAgent._extract_report(text_response) or {}
@@ -443,6 +449,11 @@ Would you like to provide any contact details so we can follow up with you? This
                                 final_report_to_save["contact_info_asked"] = True
                                 clean_response = "Would you like to provide any contact details so we can follow up with you? This is **COMPLETELY OPTIONAL**. You may say 'no' or 'skip' to remain anonymous."
                             
+                            # NEW: Other Details
+                            elif not state.get("other_details_asked"):
+                                final_report_to_save["other_details_asked"] = True
+                                clean_response = "Is there anything else you would like to share or any other details you'd like to provide before I finish the report?"
+
                             # NEW: Final Confirmation Step
                             elif not state.get("final_confirmation_asked"):
                                 final_report_to_save["final_confirmation_asked"] = True
@@ -465,25 +476,17 @@ Would you like to provide any contact details so we can follow up with you? This
                         return clean_response, final_report_to_save
                         
                     elif response.status_code == 429:
-                        print(f"[LLM_AGENT] Rate Limit 429 Hit. Waiting 10 seconds...")
                         await asyncio.sleep(10)
                         continue # Retry
                         
                     else:
-                        try:
-                            error_detail = response.json()
-                        except:
-                            error_detail = response.text
-                        print(f"[LLM_AGENT] Groq Error: {response.status_code} - {error_detail}")
                         return ("Technical difficulty. Please try again.", None)
 
-            except Exception as e:
-                print(f"[LLM_AGENT] Exception on attempt {attempt}: {e}")
+            except Exception:
                 if attempt < max_retries:
                     await asyncio.sleep(2)
                     continue
                 else:
-                    print(f"[LLM_AGENT] Max retries exceeded. Falling back to Mock.")
                     return await LLMAgent._mock_chat(conversation_history, current_state)
         
         return ("Technical difficulty. Please try again later.", None)
@@ -516,7 +519,6 @@ Would you like to provide any contact details so we can follow up with you? This
         return ("Thank you so much for your courage in reporting this. Your session is complete.\n\nYour Case ID is: CASE_ID_PLACEHOLDER\nYour Secret Key is: SECRET_KEY_PLACEHOLDER\n\nPlease keep this safe to check your status later.", state)
     @staticmethod
     def _clean_response(text: str) -> str:
-        print(f"[LLM_AGENT] Cleaning response... {len(text)} chars")
         # 1. Remove backticked JSON block
         text = re.sub(r'```json\s*\{[\s\S]*?\}\s*```', '', text, flags=re.DOTALL)
         # 2. Remove Thought block (Dotall mode)
@@ -528,7 +530,6 @@ Would you like to provide any contact details so we can follow up with you? This
         text = text.replace("Null", "").replace("None", "")
         
         cleaned = re.sub(r'\n{3,}', '\n\n', text).strip()
-        print(f"[LLM_AGENT] Cleaned output length: {len(cleaned)}")
 
         if not cleaned or len(cleaned) < 3:
             return "Reference Code: EVD-NULL. I received your input. Is there anything else you'd like to add?"
@@ -568,7 +569,6 @@ Would you like to provide any contact details so we can follow up with you? This
                     if match:
                         extracted[key] = match.group(1)
                 if extracted: return extracted
-                print(f"[LLM_AGENT] JSON Extraction Error: {e}")
         return None
     
     @staticmethod
@@ -623,8 +623,7 @@ Rules:
                 if response.status_code == 200:
                     data = response.json()
                     return data["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            print(f"[LLM_AGENT] Rewrite failed: {e}")
+        except Exception:
             return raw_text
 
     @staticmethod
@@ -635,7 +634,6 @@ Rules:
         """
         api_key = settings.GROQ_API_KEY
         if not api_key: 
-            print("[LLM_AGENT] Fast Vision Skipped: No API Key")
             return "Visual content detected (System configured without Vision Key)"
         
         try:
@@ -648,9 +646,15 @@ Rules:
                 mime_type, _ = mimetypes.guess_type(file_path)
             
             if not mime_type or not mime_type.startswith("image"):
-                print(f"[LLM_AGENT] Fast Vision Skipped: Invalid Mime {mime_type} for {file_path}")
                 return "File attachment detected"
                 
+            # Handle Supabase Storage Paths
+            if file_path.startswith("supastorage://"):
+                return "Image uploaded to secure cloud storage."
+
+            if not os.path.exists(file_path):
+                 return "Image file not found locally (likely in cloud storage)"
+
             with open(file_path, "rb") as image_file:
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
                 
@@ -681,7 +685,6 @@ Rules:
                 "Content-Type": "application/json"
             }
             
-            print(f"[LLM_AGENT] Sending Fast Vision Request for {file_path} using llama-3.2-11b-vision-preview...")
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     LLMAgent.GROQ_API_URL, json=payload, headers=headers, timeout=15.0
@@ -689,14 +692,11 @@ Rules:
                 if response.status_code == 200:
                     data = response.json()
                     desc = data["choices"][0]["message"]["content"].strip()
-                    print(f"[LLM_AGENT] Fast Vision Success: {desc}")
                     return desc
                 else:
-                    print(f"[LLM_AGENT] Fast Vision API Error {response.status_code}: {response.text}")
                     return "Image content detected (Analysis unavailable)"
                     
-        except Exception as e:
-            print(f"[LLM_AGENT] Fast Vision Exception: {e}")
+        except Exception:
             return "Image content detected"
 
     @staticmethod
@@ -706,7 +706,6 @@ Rules:
         """
         api_key = settings.GROQ_API_KEY
         if not api_key:
-            print("[LLM_AGENT] Audio Analysis Skipped: No API Key")
             return "Audio content detected"
 
         try:
@@ -715,6 +714,12 @@ Rules:
             
             print(f"[LLM_AGENT] Sending Audio to Whisper: {file_path}")
             
+            if file_path.startswith("supastorage://"):
+                 return "Audio uploaded to secure cloud storage (Transcription dependent on cloud worker)"
+            
+            if not os.path.exists(file_path):
+                return "Audio file not found locally."
+
             async with httpx.AsyncClient() as client:
                 with open(file_path, "rb") as f:
                     files = {"file": (os.path.basename(file_path), f, "audio/mpeg")}
@@ -730,15 +735,12 @@ Rules:
                     
                     if response.status_code == 200:
                         transcription = response.json().get("text", "")
-                        print(f"[LLM_AGENT] Whisper Success: {transcription[:50]}...")
                         # Limit length for context
                         if len(transcription) > 200:
                             return f"Audio Transcript: \"{transcription[:200]}...\""
                         return f"Audio Transcript: \"{transcription}\""
                     else:
-                        print(f"[LLM_AGENT] Whisper Error {response.status_code}: {response.text}")
                         return "Audio content detected (Transcription unavailable)"
 
-        except Exception as e:
-            print(f"[LLM_AGENT] Audio Analysis Exception: {e}")
+        except Exception:
             return "Audio content detected"

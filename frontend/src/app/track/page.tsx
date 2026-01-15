@@ -1,4 +1,5 @@
 "use client";
+// Force Refresh for Timezone Fix
 
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -6,7 +7,7 @@ import { Search, Shield, Calendar, AlignLeft, RefreshCcw, AlertCircle, ArrowRigh
 import { SparklesCore } from "@/components/ui/sparkles";
 import { FireSphere } from "@/components/ui/fire-sphere";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, formatToIST } from "@/lib/utils";
 
 interface PublicUpdate {
     message: string;
@@ -312,10 +313,7 @@ export default function TrackPage() {
                                                     Submitted On
                                                 </p>
                                                 <p className="text-white/90 text-2xl font-light tracking-wide">
-                                                    {new Date(result.reported_at).toLocaleString(undefined, {
-                                                        dateStyle: 'full',
-                                                        timeStyle: 'short'
-                                                    })}
+                                                    {formatToIST(result.reported_at)}
                                                 </p>
                                             </div>
                                         </div>
@@ -355,10 +353,7 @@ export default function TrackPage() {
                                                     <div className="flex items-center gap-4 mb-2">
                                                         <div className="h-[1px] w-8 bg-blue-500/50" />
                                                         <p className="text-white/30 text-xs font-mono uppercase tracking-widest">
-                                                            Update {idx + 1} • {new Date(update.timestamp).toLocaleString(undefined, {
-                                                                dateStyle: 'medium',
-                                                                timeStyle: 'short'
-                                                            })}
+                                                            Update {idx + 1} • {formatToIST(update.timestamp, { hour: undefined, minute: undefined })}
                                                         </p>
                                                     </div>
                                                     <p className="text-white/80 leading-relaxed font-light text-xl md:text-2xl max-w-4xl border-l-2 border-blue-500/20 pl-8">
@@ -400,7 +395,7 @@ export default function TrackPage() {
                                                                     {msg.attachments.map((att, i) => (
                                                                         <a
                                                                             key={i}
-                                                                            href={`http://localhost:8000/${att.file_path}`}
+                                                                            href={`${process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '')}/${att.file_path}`}
                                                                             target="_blank"
                                                                             rel="noopener noreferrer"
                                                                             className="flex items-center gap-3 bg-black/20 p-3 rounded-lg border border-white/5 hover:bg-black/40 transition-colors group/file"
@@ -415,9 +410,7 @@ export default function TrackPage() {
                                                             )}
                                                         </div>
                                                         <span className="text-xs text-white/20 mt-2 font-mono uppercase tracking-widest px-1">
-                                                            {msg.sender_role === 'user' ? 'You' : 'NGO'} • {new Date(msg.timestamp).toLocaleString(undefined, {
-                                                                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-                                                            })}
+                                                            {msg.sender_role === 'user' ? 'You' : 'NGO'} • {formatToIST(msg.timestamp, { hour: undefined, minute: undefined })}
                                                         </span>
                                                     </div>
                                                 ))

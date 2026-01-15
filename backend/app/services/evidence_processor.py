@@ -6,6 +6,7 @@ import hashlib
 import os
 import tempfile
 import subprocess
+import shutil
 from typing import List, Optional, Set
 from app.schemas.ai import EvidenceMetadata, EvidenceType
 from app.models.local_models import LocalEvidence
@@ -105,7 +106,19 @@ class EvidenceProcessor:
         try:
             import pytesseract
             from PIL import Image
-            pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+            
+            # Dynamic Tesseract Path (for Cloud vs Local)
+            tesseract_cmd = shutil.which("tesseract")
+            if tesseract_cmd:
+                pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+            else:
+                # Fallbck for local Windows dev if not in PATH
+                possible_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+                if os.path.exists(possible_path):
+                    pytesseract.pytesseract.tesseract_cmd = possible_path
+                else:
+                    logger.warning("tesseract_not_found_on_system")
+
             
             image = Image.open(io.BytesIO(content))
             text = pytesseract.image_to_string(image)
@@ -124,11 +137,11 @@ class EvidenceProcessor:
             import pytesseract
             from PIL import Image
             
-            tesseract_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-            if not os.path.exists(tesseract_path):
-                logger.warning("tesseract_not_found", path=tesseract_path)
-                return
-            pytesseract.pytesseract.tesseract_cmd = tesseract_path
+            tesseract_cmd = shutil.which("tesseract")
+            if tesseract_cmd:
+                pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+            elif os.path.exists(r"C:\Program Files\Tesseract-OCR\tesseract.exe"):
+                 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
             
             # Open PDF
             doc = fitz.open(stream=content, filetype="pdf")
@@ -180,9 +193,15 @@ class EvidenceProcessor:
         temp_audio_path = None
         try:
             import whisper
-            # Set FFmpeg path for Windows
-            ffmpeg_dir = r"C:\ffmpeg\bin"
-            os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+            import whisper
+            # Dynamic FFmpeg (Docker/Cloud usually has it in PATH)
+            ffmpeg_exe = shutil.which("ffmpeg")
+            if not ffmpeg_exe:
+                 # Fallback for local Windows
+                 ffmpeg_dir = r"C:\ffmpeg\bin"
+                 if os.path.exists(ffmpeg_dir):
+                     os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+
 
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 if file_type == EvidenceType.AUDIO:
@@ -197,7 +216,7 @@ class EvidenceProcessor:
                     temp_audio_path = tmp.name
                     # Call FFmpeg to extract audio
                     cmd = [
-                        os.path.join(ffmpeg_dir, "ffmpeg.exe"),
+                        "ffmpeg",
                         "-y", "-i", video_path, 
                         "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", 
                         temp_audio_path
@@ -229,8 +248,14 @@ class EvidenceProcessor:
         temp_video_path = None
         temp_frame_path = None
         try:
-            ffmpeg_dir = r"C:\ffmpeg\bin"
-            ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg.exe")
+            ffmpeg_exe = shutil.which("ffmpeg")
+            if not ffmpeg_exe:
+                # Fallback
+                possible_path = r"C:\ffmpeg\bin\ffmpeg.exe"
+                if os.path.exists(possible_path):
+                    ffmpeg_exe = possible_path
+                else:
+                    ffmpeg_exe = "ffmpeg" # Hope for the best
             
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as v_tmp:
                 v_tmp.write(content)

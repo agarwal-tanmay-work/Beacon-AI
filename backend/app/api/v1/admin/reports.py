@@ -8,30 +8,52 @@ from app.db.session import get_db
 from app.models.beacon import Beacon
 # We need a schema that matches what the frontend expects.
 # The frontend Interface Report has: id, status, priority, credibility_score, created_at
-from pydantic import BaseModel
-from datetime import datetime
+from pydantic import BaseModel, validator
+from datetime import datetime, timezone
 from app.models.beacon_update import BeaconUpdate
 from app.models.beacon_message import BeaconMessage
 from app.schemas.report import TrackMessage, MessageAttachment, TrackMessageRequest, SecureUploadResponse
 from fastapi import UploadFile, File, Form, HTTPException
 import os
 import hashlib
-from typing import List, Optional
+from typing import List, Optional, Any
+from app.api.deps import get_current_admin
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_admin)])
+
+
+class CaseUpdateSchema(BaseModel):
+    id: str
+    public_update: str
+    created_at: Any
+    updated_by: str
+
+    @validator("created_at", pre=True)
+    def ensure_utc(cls, v):
+        if isinstance(v, datetime):
+            if v.tzinfo is None: v = v.replace(tzinfo=timezone.utc)
+            return v.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        return v
 
 class AdminReportSchema(BaseModel):
     id: uuid.UUID
     status: str
     priority: str
     credibility_score: int
-    created_at: datetime
+    created_at: Any
     case_id: str
     incident_summary: Optional[str] = None
     app_score_explanation: Optional[str] = None
     evidence_files: Optional[List[dict]] = []
-    updates: Optional[List[dict]] = []
+    updates: Optional[List[CaseUpdateSchema]] = []
     
+    @validator("created_at", pre=True)
+    def ensure_utc(cls, v):
+        if isinstance(v, datetime):
+            if v.tzinfo is None: v = v.replace(tzinfo=timezone.utc)
+            return v.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        return v
+
     class Config:
         from_attributes = True
 

@@ -14,11 +14,12 @@ api.interceptors.request.use(
     (config) => {
         // In a client component, we might default to localStorage/cookie
         if (typeof window !== "undefined") {
-            const token = localStorage.getItem("token");
+            const token = sessionStorage.getItem("ngo_token");
             if (token && config.headers) {
                 config.headers.Authorization = `Bearer ${token}`;
             }
         }
+
         return config;
     },
     (error) => {

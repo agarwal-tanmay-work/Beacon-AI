@@ -11,11 +11,12 @@ structlog
 alembic
 httpx
 opencv-python-headless
-Pillow
-python-magic
+pymupdf
+python-magic-bin; sys_platform == 'win32'
+python-magic; sys_platform != 'win32'
 pandas
 numpy
 supabase
 pytesseract
 openai-whisper
-opencv-python
+

@@ -37,7 +37,7 @@ export default function LoginPage() {
             // Redirect to dashboard
             router.push("/");
 
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error(err);
             // Generic error message as required
             setError("Invalid credentials");

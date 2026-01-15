@@ -7,8 +7,10 @@ from app.schemas.report import NGOUpdateRequest, NGOUpdateResponse
 from app.services.llm_agent import LLMAgent
 from datetime import datetime
 import uuid
+from app.api.deps import get_current_admin
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_admin)])
+
 
 @router.post("/{id}/update", response_model=NGOUpdateResponse)
 async def update_case_status(
