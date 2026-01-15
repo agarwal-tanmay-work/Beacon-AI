@@ -4,6 +4,7 @@ pydantic[email]
 pydantic-settings
 sqlalchemy
 asyncpg
+aiosqlite
 python-multipart
 python-jose[cryptography]
 passlib[bcrypt]
