@@ -27,10 +27,7 @@ async def login(request: LoginRequest):
     if not VALID_PASS_HASH:
         raise HTTPException(status_code=500, detail="Server misconfiguration: Admin password not set.")
 
-    # In a real app, this would be verify_password(request.password, user.hashed_password)
-    # Ideally use: is_pass_ok = verify_password(request.password, VALID_PASS_HASH)
-    # For now, simplistic comparison (but comparing input to hash needs verify_password)
-    
+    is_user_ok = secrets.compare_digest(request.username, VALID_USER)
     is_pass_ok = verify_password(request.password, VALID_PASS_HASH)
     
     if not (is_user_ok and is_pass_ok):

@@ -37,3 +37,13 @@ backend/backend_config.env
 # Additional ignores
 backend/uploads/
 venv_fresh/
+
+# Backups
+*.bak
+*.log
+debug_*.py
+test_result*.txt
+sim_output.txt
+test_*.py
+**/test_*.py
+

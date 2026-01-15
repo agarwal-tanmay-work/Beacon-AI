@@ -6,16 +6,18 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies
-# - tesseract-ocr: for Image OCR
-# - libgl1-mesa-glx: for OpenCV
-# - ffmpeg: for Audio/Video processing
-# - libmagic1: for file type detection
-RUN apt-get update && apt-get install -y \
+# Install system dependencies with retries for network resilience
+RUN apt-get update && \
+    (apt-get install -y --no-install-recommends \
     tesseract-ocr \
     libgl1-mesa-glx \
     ffmpeg \
-    libmagic1 \
+    libmagic1 || \
+    (sleep 5 && apt-get update --fix-missing && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    libgl1-mesa-glx \
+    ffmpeg \
+    libmagic1)) \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Set work directory
