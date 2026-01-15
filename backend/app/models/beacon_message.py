@@ -3,7 +3,7 @@ Beacon Message Model - Stores two-way communication for a case.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
@@ -23,4 +23,4 @@ class BeaconMessage(Base):
     # Attachments: List of {file_name, file_path, file_hash, mime_type}
     attachments = Column(JSON, default=list)
     
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

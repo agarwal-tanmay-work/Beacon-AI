@@ -193,7 +193,6 @@ class EvidenceProcessor:
         temp_audio_path = None
         try:
             import whisper
-            import whisper
             # Dynamic FFmpeg (Docker/Cloud usually has it in PATH)
             ffmpeg_exe = shutil.which("ffmpeg")
             if not ffmpeg_exe:

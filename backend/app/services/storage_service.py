@@ -34,8 +34,8 @@ class StorageService:
             
             # Generate a unique path to avoid collisions
             # structure: <year>/<month>/<uuid>_<filename>
-            from datetime import datetime
-            now = datetime.utcnow()
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
             unique_name = f"{uuid.uuid4()}_{file_name}"
             file_path = f"{now.year}/{now.month}/{unique_name}"
             

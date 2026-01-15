@@ -14,9 +14,18 @@ async def main():
     # 1. Initialize Local SQLite (always needed for staging)
     await init_local_db()
     
-    # 2. In the future, if we have a remote Postgres connection, we'd do:
-    # async with engine.begin() as conn:
-    #     await conn.run_sync(Base.metadata.create_all)
+    # 2. Initialize Supabase PostgreSQL Tables (if connection string present)
+    if settings.DATABASE_URL and "sqlite" not in settings.DATABASE_URL:
+        from app.db.session import engine
+        from app.db.base import Base
+        # Trigger model registration
+        from app.models.beacon import Beacon
+        from app.models.beacon_update import BeaconUpdate
+        from app.models.beacon_message import BeaconMessage
+        
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("remote_db_init_complete")
     
     logger.info("db_init_complete")
 

@@ -12,7 +12,7 @@ import structlog
 import asyncio
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = structlog.get_logger()
 
@@ -97,7 +97,7 @@ class ScoringService:
                                 logger.warning("visual_forensic_failed", error=str(e))
                     metadata = {
                         "evidence_count": len(evidence_objs),
-                        "timestamp": str(datetime.utcnow()),
+                        "timestamp": str(datetime.now(timezone.utc)),
                         "layer1_flags": [m.dict() for m in evidence_metadata] # Now includes forensic_analysis
                     }
                     

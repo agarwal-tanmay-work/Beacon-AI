@@ -3,7 +3,7 @@ Beacon Update Model - Stores updates for a case.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
@@ -21,4 +21,4 @@ class BeaconUpdate(Base):
     public_update = Column(Text, nullable=False) # LLM-rewritten text for public
     updated_by = Column(String, nullable=True)   # NGO User ID or Name
     
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

@@ -11,7 +11,7 @@ This table stores exactly ONE row per case with:
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from sqlalchemy import Column, String, Integer, DateTime, Text, JSON
 from sqlalchemy.dialects.postgresql import UUID

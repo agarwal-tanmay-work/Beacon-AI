@@ -19,7 +19,7 @@ class GroqService:
     BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
     TIMEOUT = 60.0 
     TEXT_MODEL = "llama-3.1-8b-instant"
-    VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+    VISION_MODEL = "llama-3.2-11b-vision-preview"
 
     @classmethod
     async def _call_groq(cls, messages: List[Dict[str, Any]], schema_class: Optional[Type[T]] = None, model: str = TEXT_MODEL) -> Optional[T | str]:
@@ -107,7 +107,6 @@ class GroqService:
                 {"type": "image_url", "image_url": {"url": image_url}}
             ]
         }]
-        result_text = await cls._call_groq(messages, model=cls.VISION_MODEL)
         result_text = await cls._call_groq(messages, model=cls.VISION_MODEL)
         return {"analysis": result_text if result_text else "Analysis failed"}
 

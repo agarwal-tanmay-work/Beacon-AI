@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from sqlalchemy import Column, String, Boolean, Integer, DateTime, ForeignKey, Enum, Text, JSON
 from sqlalchemy.dialects.postgresql import UUID # UUID is fine usually as string in SQLite or dedicated type if using aiosqlite? SQLAlchemy handles it. But JSONB is PG specific.
@@ -52,8 +52,8 @@ class Report(Base):
     fabrication_risk_score = Column(Integer, nullable=True)
     
     is_archived = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
     conversations = relationship("ReportConversation", back_populates="report", cascade="all, delete-orphan")
     state_tracking = relationship("ReportStateTracking", back_populates="report", uselist=False, cascade="all, delete-orphan")
@@ -99,6 +99,6 @@ class Evidence(Base):
     is_scanned = Column(Boolean, default=False, nullable=False)
     is_pii_cleansed = Column(Boolean, default=True, nullable=False)
     
-    uploaded_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     report = relationship("Report", back_populates="evidence")

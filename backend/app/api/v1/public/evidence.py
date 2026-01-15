@@ -3,12 +3,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import os
 import uuid
 import hashlib
-from datetime import datetime
-from supabase import create_client, Client
-
 from app.db.local_db import LocalAsyncSession
 from app.models.local_models import LocalEvidence
 from app.core.config import settings
+from app.services.storage_service import StorageService
+from datetime import datetime, timezone
 
 router = APIRouter()
 
@@ -40,26 +39,13 @@ async def upload_evidence(
         # PRODUCTION: Upload to Supabase Storage if configured
         if settings.SUPABASE_URL and settings.SUPABASE_KEY and settings.ENVIRONMENT != "local_dev":
             try:
-                supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-                bucket_name = "evidence"
-                # Read file content again if needed (but we have 'content')
-                
-                # Upload
-                res = supabase.storage.from_(bucket_name).upload(
-                    path=unique_filename,
-                    file=content,
-                    file_options={"content-type": file.content_type}
-                )
-                
-                # Get Public URL (or keep private path)
-                # file_path = supabase.storage.from_(bucket_name).get_public_url(unique_filename)
-                # Ideally, store the storage reference
-                file_path = f"supastorage://{bucket_name}/{unique_filename}"
+                # Use standardized StorageService
+                upload_res = await StorageService.upload_file(content, file.filename, file.content_type or "application/octet-stream")
+                file_path = f"supastorage://{upload_res['bucket']}/{upload_res['path']}"
                 print(f"[UPLOAD] Uploaded to Supabase: {file_path}")
-                
             except Exception as sup_err:
                 print(f"[UPLOAD] Supabase Upload Failed: {sup_err}. Falling back to local.")
-                # Fallback to local if Supabase fails (or if we want hybrid)
+                # Fallback to local
                 local_path = os.path.join(UPLOAD_DIR, unique_filename)
                 with open(local_path, "wb") as f:
                     f.write(content)
@@ -82,7 +68,7 @@ async def upload_evidence(
                 size_bytes=len(content),
                 file_hash=file_hash,
                 is_pii_cleansed=False,
-                uploaded_at=datetime.utcnow()
+                uploaded_at=datetime.now(timezone.utc)
             )
             session.add(new_evidence)
             await session.commit()
