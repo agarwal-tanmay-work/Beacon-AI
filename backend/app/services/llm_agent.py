@@ -206,14 +206,14 @@ class LLMAgent:
             
         # Location Scraper: Acknowledge partial details but don't mark as "Complete"
         # We only inject this to prevent the AI from RE-ASKING for the same landmark.
-        has_loc_mentions = any(k in all_user_msgs for k in ["sector", "office", "station", "building", "street", "road", "block", "floor", "area"])
+        has_loc_mentions = any(k in all_user_msgs for k in ["sector", "office", "station", "building", "street", "road", "block", "floor", "area", "city", "state", "delhi", "mumbai", "bangalore", "chennai", "kolkata", "pune", "hyderabad"])
         
         # Heuristic: If user just gave a short answer, they likely provided the missing city.
         # Don't inject the "missing" note which causes the AI to ignore the new input.
-        is_short_answer = len(last_user_msg) < 60
+        is_short_answer = len(last_user_msg) < 80 # Increased threshold
         
         if "- WHERE:" not in "\n".join(summary_parts) and has_loc_mentions and not is_short_answer:
-             summary_parts.append("- WHERE: [Landmark mentioned. Verify if CITY is present in history.]")
+             summary_parts.append("- WHERE: [Landmark or City mentioned. Verify if FULL LOCATION (City, State, Building) is present in history.]")
         # ----------------------------------------------------------------------------
 
         summary_text = "\n".join(summary_parts) if summary_parts else "No information yet."
@@ -270,10 +270,8 @@ class LLMAgent:
             # NEW STEP: Contact Info (Explicitly Optional)
             elif not state.get("contact_info_asked"):
                 next_missing = "Optional Contact Info"
-            # NEW STEP: Other Details
             elif not state.get("other_details_asked"):
                 next_missing = "Other Details"
-            # NEW STEP: Final Confirmation
             elif not state.get("final_confirmation_asked"):
                 next_missing = "Final Confirmation"
             else:
@@ -298,7 +296,7 @@ class LLMAgent:
                     return "I understand. Is there anything else you would like to add before I finalize your report?", state
 
                 # If user confirms they have nothing else to add, finalize
-                closing_text = """Thank you for your courage.
+                closing_text = """Thank you for your courage in reporting this.
 Your Case ID is: CASE_ID_PLACEHOLDER
 Your Secret Key is: SECRET_KEY_PLACEHOLDER
 
@@ -393,19 +391,41 @@ We will investigate and take appropriate action. You've done the right thing by 
                         
                         # Determine if the AI is re-asking for a topic we already have
                         should_force_move = False
+                        
+                        # Rank fields to detect "skipping"
+                        field_rank = ["Story/What", "Location", "Time/Date", "Time (Missing)", "Date (Missing)", "Who (Offender)", "Evidence", "Optional Contact Info", "Other Details", "Final Confirmation", "COMPLETE"]
+                        current_rank = field_rank.index(next_missing) if next_missing in field_rank else 0
+                        
+                        # 1. Redundancy Guard: Is the AI asking for something we ALREADY have?
                         for field, keywords in field_keywords.items():
-                            # Special case for 'what': use has_story logic
                             status_exists = has_story if field == "what" else (state.get(field) and state[field] not in ["...", "", "none", "unknown"])
-                            
-                            # Only trigger if status exists AND the response is likely a QUESTION about it
-                            # We check for "?" to be safer, or specific "tell me" phrases
                             if status_exists:
                                 hits = [k for k in keywords if k in lower_resp]
                                 if hits:
-                                    # Check if it's actually asking
                                     if "?" in clean_response or "tell me" in lower_resp or "provide" in lower_resp:
+                                        print(f"[LLM_AGENT] Redundancy detected for {field}. Forcing move.", flush=True)
                                         should_force_move = True
                                         break
+                        
+                        # 2. Progress Guard: Is the AI skipping a field it SHOULD be asking for?
+                        if not should_force_move:
+                            for field, keywords in field_keywords.items():
+                                target_missing = next_missing.split(" ")[0] # "Time (Missing)" -> "Time"
+                                if field.lower() in target_missing.lower():
+                                    continue # This is what we WANT
+                                
+                                # If the AI mentions/asks about a DIFFERENT field that comes AFTER current rank
+                                field_map_to_missing = {"what": "Story/What", "where": "Location", "when": "Time/Date", "who": "Who (Offender)", "evidence": "Evidence"}
+                                field_in_missing = field_map_to_missing.get(field)
+                                if field_in_missing and field_in_missing in field_rank:
+                                    resp_rank = field_rank.index(field_in_missing)
+                                    if resp_rank > current_rank:
+                                        # If AI is asking for 'Who' but we are at 'When'
+                                        hits = [k for k in keywords if k in lower_resp]
+                                        if hits and ("?" in clean_response or "tell me" in lower_resp):
+                                            print(f"[LLM_AGENT] AI skipped {next_missing} for {field_in_missing}. Forcing re-prompt.", flush=True)
+                                            should_force_move = True
+                                            break
                         
                         # FIX: If we just uploaded evidence, FORCE the acknowledgement flow immediately.
                         # Do NOT let the LLM's natural response (which may mention city/location) pass through.
