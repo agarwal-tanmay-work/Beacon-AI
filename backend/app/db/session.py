@@ -8,17 +8,23 @@ db_url = settings.DATABASE_URL
 # Support both postgres:// and postgresql:// and ensure asyncpg driver is used
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
-elif db_url.startswith("postgresql://"):
-    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-
-# Ensure SSL requirement is set for Supabase/Public DBs if not already present
-if "supabase" in db_url or "db." in db_url:
-    if "ssl=" not in db_url and "sslmode=" not in db_url:
-        db_url = db_url + ("&" if "?" in db_url else "?") + "ssl=require"
+import ssl
 
 # Configure connection args
 connect_args = {}
+
+# Ensure SSL is enabled for Supabase/Public DBs
+if "supabase" in db_url or "db." in db_url:
+    # asyncpg requires an actual SSLContext object, not just a string
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE  # For simple 'require' behavior, or CERT_REQUIRED if we have robust CA certs
+    # Given we installed ca-certificates, we can try CERT_REQUIRED, but CERT_NONE is safer against random issuer errors
+    # to behave like 'sslmode=require' without 'verify-full'.
+    connect_args["ssl"] = ctx
+
 # If using Supabase Transaction Pooler (port 6543), we must disable prepared statements
+# (Though we are currently on 5432, we keep this logic just in case)
 if ":6543" in db_url:
     connect_args["statement_cache_size"] = 0
 

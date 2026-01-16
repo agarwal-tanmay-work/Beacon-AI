@@ -19,6 +19,7 @@ RUN rm -rf /var/lib/apt/lists/* && \
     ffmpeg \
     libmagic1 \
     build-essential \
+    ca-certificates \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
