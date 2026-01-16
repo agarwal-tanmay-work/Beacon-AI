@@ -18,5 +18,6 @@ pandas
 numpy
 supabase
 pytesseract
+dnspython
 
 
