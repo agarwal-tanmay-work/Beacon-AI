@@ -13,8 +13,7 @@ alembic
 httpx
 opencv-python-headless
 pymupdf
-python-magic-bin; sys_platform == 'win32'
-python-magic; sys_platform != 'win32'
+python-magic
 pandas
 numpy
 supabase
