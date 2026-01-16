@@ -12,28 +12,40 @@ def force_ipv4_resolution():
     """
     original_getaddrinfo = socket.getaddrinfo
 
+    print("Network Patch: Applied IPv4-only patch to socket.getaddrinfo")
+
     def patched_getaddrinfo(*args, **kwargs):
-        # Use AF_UNSPEC to get both IPv4 and IPv6 results
-        # We don't modify args to force AF_INET anymore
+        # Allow looking up specific families if requested, but if UNSPEC, default to INET
+        # Note: asyncio calls getaddrinfo with family=0 (AF_UNSPEC) usually.
         
         try:
+            # Call original
             res = original_getaddrinfo(*args, **kwargs)
             
-            # Filter for IPv4
+            # Debugging what we got
+            # print(f"DEBUG DNS: Looked up {args[0] if args else '?'}. Got {len(res)} results.")
+            
+            # Filter for IPv4 (AF_INET = 2)
             ipv4_res = [r for r in res if r[0] == socket.AF_INET]
+            
             if ipv4_res:
-                logger.debug(f"DNS: Returning IPv4 results for {args[0]}")
+                # print(f"DEBUG DNS: Returning {len(ipv4_res)} IPv4 addresses.")
                 return ipv4_res
             
-            # Fallback to IPv6 if no IPv4 found
-            ipv6_res = [r for r in res if r[0] == socket.AF_INET6]
-            if ipv6_res:
-                logger.debug(f"DNS: No IPv4 found, returning IPv6 results for {args[0]}")
-                return ipv6_res
-                
-            return res
+            # If we are here, NO IPv4 addresses were found.
+            # If we return IPv6, it will fail with "Network unreachable".
+            # So let's output a warning and return empty/raise to show the real issue.
+            print(f"CRITICAL DNS WARNING: Only IPv6 results found for {args[0]}. This environment likely lacks IPv4 connectivity to this host!")
+            
+            # We explicitly DO NOT return IPv6 results usually, but if we do, it crashes.
+            # Let's try to return them anyway but warn? 
+            # No, user wants to fix the crash. If we return IPv6 it crashes.
+            # If we return empty, it raises GAIErrors.
+            # better to raise a clear error.
+            raise socket.gaierror(f"No IPv4 address found for {args[0]} (IPv6 suppressed)")
+
         except socket.gaierror as e:
-            logger.error(f"DNS Resolution failed for {args[0]}: {e}")
+            # print(f"DNS Resolution failed for {args[0]}: {e}")
             raise
 
     socket.getaddrinfo = patched_getaddrinfo
