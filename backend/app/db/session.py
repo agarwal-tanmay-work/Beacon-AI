@@ -14,12 +14,23 @@ elif db_url.startswith("postgresql://"):
 import ssl
 import socket
 import dns.resolver
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 # FORCE IPv4: Manually resolve hostname to IPv4 to bypass uvloop/system IPv6 issues
 # This is critical on Render where IPv6 routing to Supabase can be flaky (Network is unreachable)
 try:
     parsed = urlparse(db_url)
+    
+    # [FIX] STRIP `sslmode` from query params!
+    # asyncpg does not support `sslmode` in the connection string and raises "unexpected keyword argument".
+    # We handle SSL manually via the `connect_args["ssl"]` below.
+    qs = dict(parse_qsl(parsed.query))
+    if "sslmode" in qs:
+        del qs["sslmode"]
+        new_query = urlencode(qs)
+        parsed = parsed._replace(query=new_query)
+        db_url = urlunparse(parsed)
+
     hostname = parsed.hostname
     if hostname and not hostname.replace('.', '').isdigit(): # Don't resolve if already IP
         # Use dnspython to query DNS directly, bypassing flaky system/libc resolver (Errno -5)
