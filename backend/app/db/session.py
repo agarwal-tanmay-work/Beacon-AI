@@ -8,8 +8,12 @@ db_url = settings.DATABASE_URL
 # Support both postgres:// and postgresql:// and ensure asyncpg driver is used
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif db_url.startswith("postgresql://"):
+    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
 import ssl
 import socket
+import dns.resolver
 from urllib.parse import urlparse, urlunparse
 
 # FORCE IPv4: Manually resolve hostname to IPv4 to bypass uvloop/system IPv6 issues
@@ -18,9 +22,14 @@ try:
     parsed = urlparse(db_url)
     hostname = parsed.hostname
     if hostname and not hostname.replace('.', '').isdigit(): # Don't resolve if already IP
-        # socket.gethostbyname is strictly IPv4 (AF_INET)
-        ipv4_addr = socket.gethostbyname(hostname)
-        print(f"[NETWORK] Resolved {hostname} to {ipv4_addr} (Forced IPv4)", flush=True)
+        # Use dnspython to query DNS directly, bypassing flaky system/libc resolver (Errno -5)
+        resolver = dns.resolver.Resolver()
+        # Use Google DNS as fallback if system DNS server is unreachable/broken
+        resolver.nameservers = ['8.8.8.8', '8.8.4.4'] 
+        answers = resolver.resolve(hostname, 'A')
+        ipv4_addr = answers[0].to_text()
+        
+        print(f"[NETWORK] Resolved {hostname} to {ipv4_addr} (via dnspython)", flush=True)
         # Replace hostname with IP in the URL
         new_netloc = parsed.netloc.replace(hostname, ipv4_addr)
         db_url = urlunparse(parsed._replace(netloc=new_netloc))
