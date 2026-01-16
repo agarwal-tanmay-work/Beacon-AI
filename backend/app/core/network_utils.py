@@ -35,9 +35,6 @@ def force_ipv4_resolution():
         except socket.gaierror as e:
             logger.error(f"DNS Resolution failed for {args[0]}: {e}")
             raise
-        except socket.gaierror as e:
-            logger.error(f"DNS Resolution failed for {args[0]}: {e}")
-            raise
 
     socket.getaddrinfo = patched_getaddrinfo
     logger.info("Applied IPv4-only network patch.")

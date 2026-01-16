@@ -3,14 +3,18 @@ from sqlalchemy.pool import NullPool
 from app.core.config import settings
 
 # Create Async Engine
-# For Supabase/PostgreSQL with asyncpg, SSL is specified in the URL, not connect_args
+# For Supabase/PostgreSQL with asyncpg, SSL is typically required
 db_url = settings.DATABASE_URL
-if db_url.startswith("postgresql://"):
-     db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+# Support both postgres:// and postgresql:// and ensure asyncpg driver is used
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif db_url.startswith("postgresql://"):
+    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-if "supabase" in db_url and "ssl=" not in db_url:
-    # Add SSL requirement to URL for asyncpg
-    db_url = db_url + ("&" if "?" in db_url else "?") + "ssl=require"
+# Ensure SSL requirement is set for Supabase/Public DBs if not already present
+if "supabase" in db_url or "db." in db_url:
+    if "ssl=" not in db_url and "sslmode=" not in db_url:
+        db_url = db_url + ("&" if "?" in db_url else "?") + "ssl=require"
 
 # Configure connection args
 connect_args = {}

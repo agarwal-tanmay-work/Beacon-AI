@@ -1,5 +1,5 @@
-# Use python 3.11 slim image
-FROM python:3.11-slim-bullseye
+# Use python 3.11 slim image (Bookworm is standard and stable)
+FROM python:3.11-slim-bookworm
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -9,10 +9,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-# Install system dependencies
+# Install system dependencies with retries for flaky mirrors
 RUN rm -rf /var/lib/apt/lists/* && \
     apt-get update --fix-missing && \
     apt-get install -y --no-install-recommends \
+    -o Acquire::Retries=3 \
     tesseract-ocr \
     libgl1-mesa-glx \
     ffmpeg \
