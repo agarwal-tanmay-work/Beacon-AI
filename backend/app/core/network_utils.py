@@ -29,22 +29,14 @@ def force_ipv4_resolution():
             ipv4_res = [r for r in res if r[0] == socket.AF_INET]
             
             if ipv4_res:
-                # print(f"DEBUG DNS: Returning {len(ipv4_res)} IPv4 addresses.")
+                # Prefer IPv4 to avoid "Network unreachable" on systems with broken IPv6 routing
                 return ipv4_res
             
-            # If we are here, NO IPv4 addresses were found.
-            # If we return IPv6, it will fail with "Network unreachable".
-            # So let's output a warning and return empty/raise to show the real issue.
-            print(f"CRITICAL DNS WARNING: Only IPv6 results found for {args[0]}. This environment likely lacks IPv4 connectivity to this host!")
-            
-            # We explicitly DO NOT return IPv6 results usually, but if we do, it crashes.
-            # Let's try to return them anyway but warn? 
-            # No, user wants to fix the crash. If we return IPv6 it crashes.
-            # If we return empty, it raises GAIErrors.
-            # better to raise a clear error.
-            raise socket.gaierror(f"No IPv4 address found for {args[0]} (IPv6 suppressed)")
+            # If no IPv4 found, return original results (likely IPv6-only host)
+            # This ensures connectivity to IPv6-only Supabase projects
+            return res
 
-        except socket.gaierror as e:
+        except socket.gaierror:
             # print(f"DNS Resolution failed for {args[0]}: {e}")
             raise
 
