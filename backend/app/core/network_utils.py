@@ -12,7 +12,7 @@ def force_ipv4_resolution():
     """
     original_getaddrinfo = socket.getaddrinfo
 
-    print("Network Patch: Applied IPv4-only patch to socket.getaddrinfo")
+    print("Network Patch: Applied IPv4-only patch to socket.getaddrinfo", flush=True)
 
     def patched_getaddrinfo(*args, **kwargs):
         # Allow looking up specific families if requested, but if UNSPEC, default to INET
