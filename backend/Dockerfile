@@ -45,5 +45,7 @@ COPY --chown=appuser:appuser . .
 # Expose port
 EXPOSE 8000
 
-# Run using the venv's python
-CMD ["sh", "-c", "python -m app.db.init_db && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+RUN echo "Docker image built successfully"
+
+# Run uvicorn directly (DB init is now handled in app/main.py lifespan)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

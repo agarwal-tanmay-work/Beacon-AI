@@ -190,54 +190,108 @@ class EvidenceProcessor:
 
     @classmethod
     def _process_media_transcription(cls, content: bytes, file_type: EvidenceType, meta: EvidenceMetadata):
+        """
+        Transcribes audio/video using Groq API (Whisper-large-v3).
+        """
         temp_audio_path = None
+        temp_video_path = None
+        
         try:
-            import whisper
-            # Dynamic FFmpeg (Docker/Cloud usually has it in PATH)
+            import httpx
+            from app.core.config import settings
+            
+            if not settings.GROQ_API_KEY:
+                logger.warning("groq_api_key_missing", file=meta.file_name)
+                meta.audio_transcript_snippet = "[Error: Groq API Key missing]"
+                return
+
+            # Dynamic FFmpeg check (needed for video->audio extraction)
             ffmpeg_exe = shutil.which("ffmpeg")
             if not ffmpeg_exe:
                  # Fallback for local Windows
                  ffmpeg_dir = r"C:\ffmpeg\bin"
                  if os.path.exists(ffmpeg_dir):
                      os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+                     ffmpeg_exe = shutil.which("ffmpeg")
 
-
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                if file_type == EvidenceType.AUDIO:
-                    tmp.write(content)
-                    temp_audio_path = tmp.name
-                else:
-                    # VIDEO: Extract audio using FFmpeg
-                    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as video_tmp:
-                        video_tmp.write(content)
-                        video_path = video_tmp.name
-                    
-                    temp_audio_path = tmp.name
-                    # Call FFmpeg to extract audio
-                    cmd = [
-                        "ffmpeg",
-                        "-y", "-i", video_path, 
-                        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", 
-                        temp_audio_path
-                    ]
-                    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-                    os.unlink(video_path)
-
-            model = whisper.load_model("tiny")
-            result = model.transcribe(temp_audio_path)
-            text = result["text"].strip()
+            # Prepare Audio File
+            # If video, extract audio first. If audio, save to temp.
+            with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as tmp:
+                temp_audio_path = tmp.name
             
-            if text:
-                meta.audio_transcript_snippet = text[:500]
-                meta.has_relevant_keywords = len(text) > 5
+            if file_type == EvidenceType.VIDEO:
+                # Extract Audio from Video
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as v_tmp:
+                    v_tmp.write(content)
+                    temp_video_path = v_tmp.name
+                
+                # Check for ffmpeg again before running
+                if not shutil.which("ffmpeg"): 
+                     logger.warning("ffmpeg_missing_for_extraction", file=meta.file_name)
+                     meta.audio_transcript_snippet = "[Error: FFmpeg missing for video processing]"
+                     return
+
+                cmd = [
+                    "ffmpeg", "-y", "-i", temp_video_path,
+                    "-vn", "-acodec", "aac", "-b:a", "64k", 
+                    temp_audio_path
+                ]
+                # Run ffmpeg quietly
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             else:
-                meta.audio_transcript_snippet = "[Silent or unintelligible]"
+                # It's already audio, just write bytes (assuming supported format like mp3/wav/m4a)
+                # If raw bytes, might need conversion, but usually file extension match helps.
+                # For safety, let's write to the temp file.
+                with open(temp_audio_path, "wb") as f:
+                    f.write(content)
+
+            # Call Groq API
+            file_size = os.path.getsize(temp_audio_path)
+            if file_size == 0:
+                 meta.audio_transcript_snippet = "[Error: Empty audio file]"
+                 return
+
+            with open(temp_audio_path, "rb") as audio_file:
+                files = {"file": (os.path.basename(temp_audio_path), audio_file, "audio/m4a")}
+                data = {
+                    "model": "whisper-large-v3",
+                    "temperature": 0,
+                    "response_format": "json"
+                }
+                
+                logger.info("groq_transcription_start", file=meta.file_name)
+                response = httpx.post(
+                    "https://api.groq.com/openai/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+                    files=files,
+                    data=data,
+                    timeout=60.0 # 60s timeout for long audio
+                )
+            
+            if response.status_code == 200:
+                result = response.json()
+                text = result.get("text", "").strip()
+                if text:
+                    meta.audio_transcript_snippet = text[:500]
+                    meta.has_relevant_keywords = len(text) > 5
+                else:
+                    meta.audio_transcript_snippet = "[Silent or unintelligible]"
+            else:
+                logger.error("groq_api_error", status=response.status_code, response=response.text)
+                meta.audio_transcript_snippet = f"[Error: Groq API {response.status_code}]"
+
         except Exception as e:
             logger.warning("transcription_failed", error=str(e), file=meta.file_name)
             meta.audio_transcript_snippet = f"[Processing Failed: {str(e)}]"
+            
         finally:
+            # Cleanup
             if temp_audio_path and os.path.exists(temp_audio_path):
-                os.unlink(temp_audio_path)
+                try: os.unlink(temp_audio_path)
+                except: pass
+            if temp_video_path and os.path.exists(temp_video_path):
+                try: os.unlink(temp_video_path)
+                except: pass
 
     @classmethod
     def _process_video_cv(cls, content: bytes, meta: EvidenceMetadata):

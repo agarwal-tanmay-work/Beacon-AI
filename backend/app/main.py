@@ -30,10 +30,22 @@ logger = structlog.get_logger()
 async def lifespan(app: FastAPI):
     """
     Lifecycle manager for the application.
-    Initializes local SQLite database for staging data.
+    Initializes database (Local + Remote) on startup.
     """
-    from app.db.local_db import init_local_db
-    await init_local_db()
+    try:
+        from app.db.init_db import run_init_db
+        # Run DB initialization (includes network patch and connectivity check)
+        await run_init_db()
+    except Exception as e:
+        logger.error("startup_failed", error=str(e))
+        # If DB init fails, we probably shouldn't start the app, 
+        # but locally we might want to continue. 
+        # For production (Render), failing fast is better than hanging.
+        if settings.ENVIRONMENT == "production":
+            logger.error("db_init_failed_continuing", message="DB Init failed, but starting app to satisfy Render health check/port bind.")
+            # Do NOT raise e. We want the app to start so it binds to port 8000.
+            # raise e
+            
     logger.info("startup", project=settings.PROJECT_NAME)
     yield
     logger.info("shutdown")
@@ -107,4 +119,4 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000)

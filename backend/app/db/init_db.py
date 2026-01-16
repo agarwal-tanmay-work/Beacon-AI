@@ -13,7 +13,7 @@ from app.core.config import settings
 
 logger = structlog.get_logger()
 
-async def main():
+async def run_init_db():
     logger.info("db_init_start")
     
     # 1. Initialize Local SQLite (always needed for staging)
@@ -21,6 +21,7 @@ async def main():
     
     # 2. Initialize Supabase PostgreSQL Tables (if connection string present)
     if settings.DATABASE_URL and "sqlite" not in settings.DATABASE_URL:
+        # Import here to avoid circular dependencies or early initialization
         from app.db.session import engine
         from app.db.base import Base
         # Trigger model registration
@@ -45,4 +46,4 @@ async def main():
     logger.info("db_init_complete")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_init_db())
