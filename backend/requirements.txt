@@ -18,5 +18,5 @@ pandas
 numpy
 supabase
 pytesseract
-openai-whisper
+
 
