@@ -408,7 +408,8 @@ export default function TrackPage() {
                                                                                 </div>
                                                                                 <span className="text-sm font-mono opacity-70 truncate max-w-[200px] group-hover/file:opacity-100">{att.file_name}</span>
                                                                             </a>
-                                                                        ))}
+                                                                        );
+                                                                    })}
                                                                 </div>
                                                             )}
                                                         </div>

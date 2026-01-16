@@ -335,7 +335,8 @@ export default function CaseDetailPage() {
                                                                 <FileText className="w-3 h-3 text-primary" />
                                                                 <span className="truncate max-w-[150px]">{att.file_name}</span>
                                                             </a>
-                                                        ))}
+                                                        );
+                                                    })}
                                                 </div>
                                             )}
                                         </div>
