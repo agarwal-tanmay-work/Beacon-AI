@@ -186,7 +186,34 @@ class LLMAgent:
 
         # 1. LOCAL FACT SCRAPER (Safety Net)
         state = current_state.copy() if current_state else {}
-        last_user_msg = conversation_history[-1]["content"].lower() if conversation_history else ""
+        
+        # Aggressive keyword scraping from history
+        all_user_msgs_list = [m["content"] for m in conversation_history if m.get("role") == "user"]
+        all_user_msgs = " ".join(all_user_msgs_list).lower()
+        last_user_msg = all_user_msgs_list[-1].lower() if all_user_msgs_list else ""
+        
+        # Scrape and update state programmatically
+        if not state.get("where"):
+            # Aggressive Location Keywords (including common Indian suffixes and states)
+            loc_keywords = [
+                "sector", "office", "station", "building", "street", "road", "block", "floor", "area", 
+                "hospital", "school", "park", "chowk", "gali", "nagar", "pur", "bad", "garh", 
+                "haryana", "delhi", "punjab", "up", "uttar pradesh", "maharashtra", "gujarat", 
+                "karnataka", "telangana", "tamil nadu", "office", "dept", "department"
+            ]
+            for k in loc_keywords:
+                if f" {k}" in f" {all_user_msgs}" or f"{k} " in f"{all_user_msgs} ":
+                    # Look for the phrase containing the keyword
+                    match = re.search(rf'[^.!?]*\b{k}\b[^.!?]*', all_user_msgs, re.IGNORECASE)
+                    if match:
+                        found_loc = match.group(0).strip().capitalize()
+                        if len(found_loc) > 3:
+                            state["where"] = found_loc
+                            break
+        
+        if not state.get("when"):
+            if any(k in all_user_msgs for k in ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "tomorrow", "yesterday", "today"]):
+                 state["when"] = "[Extracted from history]" # Trigger re-check or logic
         
         # 2. Build the PROGRESS SUMMARY (LLM is sole authority)
         summary_parts = []
@@ -296,6 +323,7 @@ class LLMAgent:
                     return "I understand. Is there anything else you would like to add before I finalize your report?", state
 
                 # If user confirms they have nothing else to add, finalize
+                print(f"[LLM_AGENT] Bypass triggered: All info collected. Returning final message.", flush=True)
                 closing_text = """Thank you for your courage in reporting this.
 Your Case ID is: CASE_ID_PLACEHOLDER
 Your Secret Key is: SECRET_KEY_PLACEHOLDER
