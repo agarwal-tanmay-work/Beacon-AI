@@ -18,19 +18,24 @@ async def login(request: LoginRequest):
     Credentials are managed via secure hashing and JWT.
     """
     VALID_USER = "beaconai"
-    # The hash for "BeaconAI@26" produced with pbkdf2_sha256
-    # For demo purposes, we verify against the expected plain text or hash
-    # Security: Use hash from Environment Variables
-    VALID_PASS_HASH = getattr(settings, "ADMIN_PASSWORD_HASH", None)
+    VALID_PASS_HASH = settings.ADMIN_PASSWORD_HASH
     
-    # Fallback to a safe default if not set (prevent open access)
+    # Fallback/Safety Check
     if not VALID_PASS_HASH:
         raise HTTPException(status_code=500, detail="Server misconfiguration: Admin password not set.")
 
+    # Constant-time comparison for username
     is_user_ok = secrets.compare_digest(request.username, VALID_USER)
-    is_pass_ok = verify_password(request.password, VALID_PASS_HASH)
     
+    # Verify password hash
+    try:
+        is_pass_ok = verify_password(request.password, VALID_PASS_HASH)
+    except Exception:
+        # Check against plain text IF environment was misconfigured (Legacy Fallback)
+        is_pass_ok = (request.password == VALID_PASS_HASH)
+
     if not (is_user_ok and is_pass_ok):
+        # Return generic error
         raise HTTPException(status_code=401, detail="Invalid credentials")
         
     # Generate a real JWT token

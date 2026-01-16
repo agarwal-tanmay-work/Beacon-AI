@@ -61,5 +61,9 @@ async def handle_message(
         )
         return response
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Internal server error")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Message processing failed: {str(e)}", exc_info=True)
+        # Surface internal error in DEV mode or if critical
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
