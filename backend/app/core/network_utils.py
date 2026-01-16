@@ -13,23 +13,28 @@ def force_ipv4_resolution():
     original_getaddrinfo = socket.getaddrinfo
 
     def patched_getaddrinfo(*args, **kwargs):
-        # Enforce AF_INET (IPv4) if family is unspecified or AF_UNSPEC
-        if 'family' in kwargs:
-            if kwargs['family'] == socket.AF_UNSPEC:
-                kwargs['family'] = socket.AF_INET
-        elif len(args) > 2 and args[2] == socket.AF_UNSPEC:
-            # args structure: host, port, family, type, proto, flags
-            args_list = list(args)
-            args_list[2] = socket.AF_INET
-            args = tuple(args_list)
+        # Use AF_UNSPEC to get both IPv4 and IPv6 results
+        # We don't modify args to force AF_INET anymore
         
-        # Fallback: Filter results manually just in case
         try:
             res = original_getaddrinfo(*args, **kwargs)
+            
+            # Filter for IPv4
             ipv4_res = [r for r in res if r[0] == socket.AF_INET]
             if ipv4_res:
+                logger.debug(f"DNS: Returning IPv4 results for {args[0]}")
                 return ipv4_res
+            
+            # Fallback to IPv6 if no IPv4 found
+            ipv6_res = [r for r in res if r[0] == socket.AF_INET6]
+            if ipv6_res:
+                logger.debug(f"DNS: No IPv4 found, returning IPv6 results for {args[0]}")
+                return ipv6_res
+                
             return res
+        except socket.gaierror as e:
+            logger.error(f"DNS Resolution failed for {args[0]}: {e}")
+            raise
         except socket.gaierror as e:
             logger.error(f"DNS Resolution failed for {args[0]}: {e}")
             raise
