@@ -5,40 +5,9 @@ logger = logging.getLogger(__name__)
 
 def force_ipv4_resolution():
     """
-    Monkey-patch socket.getaddrinfo to filter out IPv6 results.
-    This forces the application to use IPv4, avoiding 'Network is unreachable' 
-    errors on environments (like specific Render regions) where IPv6 routing 
-    to specific providers (like Supabase) is broken or flaky.
+    DEPRECATED: Network Patch Neutralized.
+    Relying on system default DNS resolution (IPv4/IPv6 auto).
+    This fixes 'Network is unreachable' on Render when forcing IPv4.
     """
-    original_getaddrinfo = socket.getaddrinfo
-
-    print("Network Patch: Applied IPv4-only patch to socket.getaddrinfo", flush=True)
-
-    def patched_getaddrinfo(*args, **kwargs):
-        # Allow looking up specific families if requested, but if UNSPEC, default to INET
-        # Note: asyncio calls getaddrinfo with family=0 (AF_UNSPEC) usually.
-        
-        try:
-            # Call original
-            res = original_getaddrinfo(*args, **kwargs)
-            
-            # Debugging what we got
-            # print(f"DEBUG DNS: Looked up {args[0] if args else '?'}. Got {len(res)} results.")
-            
-            # Filter for IPv4 (AF_INET = 2)
-            ipv4_res = [r for r in res if r[0] == socket.AF_INET]
-            
-            if ipv4_res:
-                # Prefer IPv4 to avoid "Network unreachable" on systems with broken IPv6 routing
-                return ipv4_res
-            
-            # If no IPv4 found, return original results (likely IPv6-only host)
-            # This ensures connectivity to IPv6-only Supabase projects
-            return res
-
-        except socket.gaierror:
-            # print(f"DNS Resolution failed for {args[0]}: {e}")
-            raise
-
-    socket.getaddrinfo = patched_getaddrinfo
-    logger.info("Applied IPv4-only network patch.")
+    # No-op: Do not patch socket.getaddrinfo
+    logger.info("Network Patch: Using system default DNS resolution.")

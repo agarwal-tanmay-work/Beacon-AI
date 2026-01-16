@@ -38,13 +38,11 @@ async def lifespan(app: FastAPI):
         await run_init_db()
     except Exception as e:
         logger.error("startup_failed", error=str(e))
-        # If DB init fails, we probably shouldn't start the app, 
-        # but locally we might want to continue. 
-        # For production (Render), failing fast is better than hanging.
-        if settings.ENVIRONMENT == "production":
-            logger.error("db_init_failed_continuing", message="DB Init failed, but starting app to satisfy Render health check/port bind.")
-            # Do NOT raise e. We want the app to start so it binds to port 8000.
-            # raise e
+        # FAIL FAST: If DB connection fails, the app must not start.
+        # This prevents "zombie" states where health checks pass but auth/chat fails.
+        # Render will restart the service until it connects.
+        print(f"[FATAL] DB Init Failed: {e}. Exiting...", flush=True)
+        raise e
             
     logger.info("startup", project=settings.PROJECT_NAME)
     yield
