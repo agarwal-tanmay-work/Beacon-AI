@@ -24,9 +24,10 @@ async def login(request: LoginRequest):
     VALID_USER = "beaconai"
     FALLBACK_PASS = "BeaconAI@26"
     
-    # 1. Strict Username Check (Case-sensitive)
-    if request.username != VALID_USER:
-        print(f"[AUTH] Login failed: Username '{request.username}' != '{VALID_USER}'")
+    # 1. Flexible Username Check (Case-insensitive + Alias)
+    input_user = request.username.lower().strip()
+    if input_user not in [VALID_USER, "admin"]:
+        print(f"[AUTH] Login failed: Username '{input_user}' not recognized.")
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
     is_verified = False
