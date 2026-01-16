@@ -33,8 +33,8 @@ class LocalSession(LocalBase):
     is_active = Column(Boolean, default=True, nullable=False)
     is_submitted = Column(Boolean, default=False, nullable=False)
     case_id = Column(String(15), nullable=True)  # Set when submitted
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
 
 class LocalConversation(LocalBase):
@@ -47,7 +47,7 @@ class LocalConversation(LocalBase):
     session_id = Column(String(36), nullable=False, index=True)
     sender = Column(Enum(LocalSenderType), nullable=False)
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
 class LocalStateTracking(LocalBase):
@@ -59,7 +59,7 @@ class LocalStateTracking(LocalBase):
     session_id = Column(String(36), primary_key=True)
     current_step = Column(String(50), nullable=False)
     context_data = Column(JSON, default=dict, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
 
 class LocalEvidence(LocalBase):
@@ -76,4 +76,4 @@ class LocalEvidence(LocalBase):
     size_bytes = Column(Integer, nullable=False)
     file_hash = Column(String(128), nullable=False)
     is_pii_cleansed = Column(Boolean, default=False, nullable=False)
-    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    uploaded_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

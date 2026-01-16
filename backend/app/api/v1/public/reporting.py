@@ -59,11 +59,13 @@ async def handle_message(
             supabase_session=db,
             background_tasks=background_tasks
         )
+
+        # Safety: Ensure content is never empty
+        if not response.content or not response.content.strip():
+            response.content = "I'm listening. Please describe the incident you'd like to report, including the date and location."
+        
         return response
     except Exception as e:
         import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Message processing failed: {str(e)}", exc_info=True)
-        # Surface internal error in DEV mode or if critical
+        logging.getLogger(__name__).error(f"Error in handle_message: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-

@@ -65,3 +65,15 @@ class StorageService:
             # Retain original behavior if upload fails? Or re-raise?
             # For now, log and re-raise so we know it failed.
             raise e
+
+    @classmethod
+    def download_file(cls, bucket_name: str, path: str) -> bytes:
+        """
+        Downloads a file from Supabase Storage (Synchronous for use in threadpools).
+        """
+        try:
+            client = cls.get_client()
+            return client.storage.from_(bucket_name).download(path)
+        except Exception as e:
+            logger.error("storage_download_failed", error=str(e), path=path)
+            raise e

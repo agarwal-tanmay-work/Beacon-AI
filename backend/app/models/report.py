@@ -69,7 +69,7 @@ class ReportConversation(Base):
     content_redacted = Column(Text, nullable=False)
     intent_detected = Column(String(100), nullable=True)
     
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     report = relationship("Report", back_populates="conversations")
 
@@ -79,7 +79,7 @@ class ReportStateTracking(Base):
     report_id = Column(UUID(as_uuid=True), ForeignKey("reports.id"), primary_key=True)
     current_step = Column(String(50), nullable=False)
     context_data = Column(JSON, default=dict, nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
 
     report = relationship("Report", back_populates="state_tracking")

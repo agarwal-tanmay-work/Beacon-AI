@@ -264,7 +264,7 @@ async def admin_send_message(
         case_id=case.case_id,
         sender_role="ngo",
         content=request.content,
-        attachments=[att.dict() for att in request.attachments]
+        attachments=[att.model_dump() for att in request.attachments]
     )
     db.add(new_message)
     await db.commit()
@@ -298,21 +298,32 @@ async def upload_admin_file(
         raise HTTPException(status_code=404, detail="Case not found")
         
     try:
+        from app.services.storage_service import StorageService
+        from app.core.config import settings
         UPLOAD_DIR = "uploads"
         # SECURITY NOTE: In prod, use S3 or similar. Local storage for demo.
-        # Check for path traversal? uuid4 as filename prevents it.
-        # Ensure uploads dir exists
         if not os.path.exists(UPLOAD_DIR):
             os.makedirs(UPLOAD_DIR)
         
         content = await file.read()
-        
         file_ext = os.path.splitext(file.filename)[1]
         unique_filename = f"{uuid.uuid4()}{file_ext}"
-        file_path = os.path.join(UPLOAD_DIR, unique_filename).replace("\\", "/")
+        file_path = ""
+
+        # Production Upload
+        if settings.SUPABASE_URL and settings.SUPABASE_KEY and settings.ENVIRONMENT != "local_dev":
+            try:
+                upload_res = await StorageService.upload_file(content, file.filename, file.content_type or "application/octet-stream")
+                file_path = f"supastorage://{upload_res['bucket']}/{upload_res['path']}"
+            except Exception as e:
+                # Log and fallback to local
+                print(f"[ADMIN_UPLOAD] Supabase upload failed: {e}")
         
-        with open(file_path, "wb") as f:
-            f.write(content)
+        if not file_path:
+            local_path = os.path.join(UPLOAD_DIR, unique_filename).replace("\\", "/")
+            with open(local_path, "wb") as f:
+                f.write(content)
+            file_path = local_path
             
         return SecureUploadResponse(
             file_name=file.filename,

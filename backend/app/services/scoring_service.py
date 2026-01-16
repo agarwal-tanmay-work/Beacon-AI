@@ -2,6 +2,7 @@
 from typing import Dict, Any, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
+from fastapi.concurrency import run_in_threadpool
 from app.services.ai_service import GroqService
 from app.services.evidence_processor import EvidenceProcessor
 from app.models.beacon import Beacon
@@ -38,8 +39,30 @@ class ScoringService:
                     if not chat_history:
                         raise ValueError("No chat history found for analysis.")
 
-                    # 2. Layer 1: Deterministic Evidence Processing
-                    evidence_metadata = EvidenceProcessor.process_evidence(evidence_objs)
+                    # 1.5 Ensure evidence is local for processing (Download if needed)
+                    import tempfile
+                    from app.services.storage_service import StorageService
+                    
+                    for ev in evidence_objs:
+                        if ev.file_path.startswith("supastorage://"):
+                            try:
+                                # Format: supastorage://bucket/path/to/file
+                                parts = ev.file_path.replace("supastorage://", "").split("/", 1)
+                                if len(parts) == 2:
+                                    bucket_name, remote_path = parts
+                                    file_bytes = await run_in_threadpool(StorageService.download_file, bucket_name, remote_path)
+                                    
+                                    # Save to temp file
+                                    suffix = os.path.splitext(ev.file_name)[1]
+                                    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                                        tmp.write(file_bytes)
+                                        ev.file_path = tmp.name # Update in-memory path for processor
+                                        logger.info("downloaded_remote_evidence", case_id=case_id, temp_path=ev.file_path)
+                            except Exception as dl_err:
+                                logger.error("remote_download_failed", file=ev.file_name, error=str(dl_err))
+
+                    # 2. Layer 1: Deterministic Evidence Processing (Run in threadpool as it's synchronous)
+                    evidence_metadata = await run_in_threadpool(EvidenceProcessor.process_evidence, evidence_objs)
                             
                     # 3. Layer 2: AI Reasoning
                     summary = await GroqService.generate_pro_summary(chat_history)
@@ -83,10 +106,10 @@ class ScoringService:
                             # We fetch the raw content for vision analysis
                             # Note: LocalEvidence stores the file_path
                             try:
-                                with open(ev.file_path, "rb") as f:
-                                    img_content = f.read()
-                                
                                 logger.info("running_forensic_visual", file=ev.file_name)
+                                # Non-blocking read
+                                img_content = await run_in_threadpool(lambda: open(ev.file_path, "rb").read())
+                                
                                 visual_desc = await GroqService.perform_forensic_visual_analysis(
                                     image_bytes=img_content,
                                     mime_type="image/png" if ev.file_name.lower().endswith(".png") else "image/jpeg"
@@ -98,7 +121,7 @@ class ScoringService:
                     metadata = {
                         "evidence_count": len(evidence_objs),
                         "timestamp": str(datetime.now(timezone.utc)),
-                        "layer1_flags": [m.dict() for m in evidence_metadata] # Now includes forensic_analysis
+                        "layer1_flags": [m.model_dump() for m in evidence_metadata] # Now includes forensic_analysis
                     }
                     
                     score_result = await GroqService.calculate_credibility_score(chat_history, evidence_metadata, metadata)
@@ -114,9 +137,9 @@ class ScoringService:
                     # 5. Atomic Commit
                     # We map the new Pydantic models to JSON for storage
                     breakdown_json = {
-                        "narrative": score_result.narrative_credibility.dict(),
-                        "evidence": score_result.evidence_strength.dict(),
-                        "behavioral": score_result.behavioral_reliability.dict(),
+                        "narrative": score_result.narrative_credibility.model_dump(),
+                        "evidence": score_result.evidence_strength.model_dump(),
+                        "behavioral": score_result.behavioral_reliability.model_dump(),
                         "rationale": score_result.rationale,
                         "confidence": score_result.confidence_level,
                         "limitations": score_result.limitations,

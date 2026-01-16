@@ -76,7 +76,7 @@ def calculate_deterministically(features: CredibilityFeatures, metadata: Dict[st
     if features.incident_date_extracted and metadata.get("created_at"):
         try:
             inc_date = datetime.fromisoformat(features.incident_date_extracted).date()
-            rep_date = metadata["created_at"].date() if isinstance(metadata["created_at"], datetime) else datetime.utcnow().date()
+            rep_date = metadata["created_at"].date() if isinstance(metadata["created_at"], datetime) else datetime.now(timezone.utc).date()
             
             delta_days = (rep_date - inc_date).days
             

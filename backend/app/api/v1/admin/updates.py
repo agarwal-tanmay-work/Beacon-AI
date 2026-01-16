@@ -42,7 +42,9 @@ async def update_case_status(
     # 4. Update Main Case Status
     case.last_raw_status = request.raw_update
     case.last_framed_status = public_text
-    case.last_updated_at = datetime.utcnow()
+    
+    from app.core.time_utils import get_utc_now
+    case.last_updated_at = get_utc_now()
     
     # Optional Status Change
     if request.status:

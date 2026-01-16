@@ -50,15 +50,15 @@ class Beacon(Base):
     last_raw_status = Column(Text, nullable=True)       # Raw NGO input
     last_framed_status = Column(Text, nullable=True)    # LLM-framed public output
     
-    last_updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    last_updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
     
     # Evidence (Base64 encoded files in JSONB)
     # Format: [{"file_name": "...", "mime_type": "...", "size_bytes": N, "content_base64": "..."}]
     evidence_files = Column(JSON, default=list)
     
     # Timestamps
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Two-Phase Analysis Tracking
     analysis_status = Column(String, default="pending", nullable=False) # 'pending' or 'completed'

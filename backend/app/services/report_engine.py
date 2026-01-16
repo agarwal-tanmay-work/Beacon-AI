@@ -32,12 +32,16 @@ from app.models.local_models import LocalEvidence
 from app.models.beacon import Beacon
 from app.schemas.report import MessageResponse
 from app.services.llm_agent import LLMAgent
+from app.services.case_service import CaseService
 from app.models.report import SenderType
 from uuid import UUID as UUIDType
 from passlib.context import CryptContext
 import secrets
+import logging
+from fastapi import BackgroundTasks
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+logger = logging.getLogger(__name__)
 
 
 class ReportEngine:
@@ -210,39 +214,58 @@ class ReportEngine:
                 # 5. Handle completion
                 next_step = "ACTIVE"
                 case_id = None
+                secret_key_display = None
                 
                 # Trigger submission ONLY if placeholder is detected in text
-                # This ensures the AI leads the conversation closure.
                 if "CASE_ID_PLACEHOLDER" in llm_response:
                     case_id = await CaseService.generate_next_case_id(supabase_session)
                     
-                    # ---------------------------------------------------------
-                    # GENERATE SECRET KEY (EARLY FOR REPLACEMENT)
-                    # ---------------------------------------------------------
-                    # Generate 8 character hex key and format as XXXX-XXXX
+                    # Generate Secret Key
                     raw_hex = secrets.token_hex(4).upper() 
                     secret_key_display = f"{raw_hex[:4]}-{raw_hex[4:]}"
                     secret_key_hash = pwd_context.hash(secret_key_display)
                     
-                    # Replace placeholders in LLM response
+                    # Replace placeholders
                     llm_response = llm_response.replace("CASE_ID_PLACEHOLDER", case_id)
                     llm_response = llm_response.replace("SECRET_KEY_PLACEHOLDER", secret_key_display)
                     
-                    # Get reported_at timestamp in UTC
+                    # Get reported_at timestamp
                     from app.core.time_utils import get_utc_now
                     reported_at_utc = get_utc_now()
                     
-                    # Gather evidence files (Parallel Upload)
+                    # Gather evidence files
                     evidence_files = await ReportEngine._upload_evidence_and_get_metadata(report_id, local_session)
                     
                     # ---------------------------------------------------------
                     # PHASE 1: INTAKE (FAIL-SAFE)
-                    # Store Raw Data Immediately. No AI / Scoring here.
                     # ---------------------------------------------------------
+                    # Create the actual Beacon record in Supabase
+                    new_case = Beacon(
+                        case_id=case_id,
+                        reported_at=reported_at_utc,
+                        secret_key=secret_key_display,
+                        secret_key_hash=secret_key_hash,
+                        status="Received",
+                        incident_summary=final_report.get("incident_summary") or "In-progress report",
+                        evidence_files=evidence_files,
+                        analysis_status="pending"
+                    )
+                    supabase_session.add(new_case)
+                    
+                    # Store case_id in local session too for tracking
+                    from app.models.local_models import LocalSession
+                    stmt_loc = select(LocalSession).where(LocalSession.id == report_id)
+                    loc_res = await local_session.execute(stmt_loc)
+                    loc_sess = loc_res.scalar_one_or_none()
+                    if loc_sess:
+                        loc_sess.case_id = case_id
+                        loc_sess.is_submitted = True
 
-                    # COMMIT INTELLIGENCE (RAW DATA)
+                    # COMMIT PHASE 1 (RAW DATA)
                     await local_session.commit()
                     await supabase_session.commit()
+                    
+                    logger.info("phase1_intake_complete", case_id=case_id)
 
                     # ---------------------------------------------------------
                     # PHASE 2: TRIGGER ASYNC ANALYSIS
@@ -250,8 +273,6 @@ class ReportEngine:
                     if background_tasks:
                         from app.services.scoring_service import ScoringService
                         background_tasks.add_task(ScoringService.run_background_scoring, report_id, case_id)
-                    else:
-                        pass
 
                 # Always commit local session (messages + state) for every turn
                 await local_session.commit()

@@ -59,11 +59,16 @@ async def upload_evidence(
             
         # Track in local SQLite
         async with LocalAsyncSession() as session:
+            # Only apply abspath if it's a local file path
+            final_path = file_path
+            if not file_path.startswith("supastorage://"):
+                final_path = os.path.abspath(file_path)
+
             new_evidence = LocalEvidence(
                 id=str(uuid.uuid4()),
                 session_id=report_id,
                 file_name=file.filename,
-                file_path=os.path.abspath(file_path),
+                file_path=final_path,
                 mime_type=file.content_type or "application/octet-stream",
                 size_bytes=len(content),
                 file_hash=file_hash,
