@@ -321,18 +321,21 @@ export default function CaseDetailPage() {
                                             {msg.content}
                                             {msg.attachments && msg.attachments.length > 0 && (
                                                 <div className="mt-2 space-y-1">
-                                                    {msg.attachments.map((att, idx) => (
-                                                        <a
-                                                            key={idx}
-                                                            href={`${process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '')}/${att.file_path}`}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="flex items-center gap-2 text-xs bg-black/20 p-2 rounded hover:bg-black/40 transition-colors"
-                                                        >
-                                                            <FileText className="w-3 h-3 text-primary" />
-                                                            <span className="truncate max-w-[150px]">{att.file_name}</span>
-                                                        </a>
-                                                    ))}
+                                                    {msg.attachments.map((att, idx) => {
+                                                        const backendRoot = process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/v1\/?$/, "") || "http://127.0.0.1:8000";
+                                                        const fileUrl = att.file_path.startsWith("http") ? att.file_path : `${backendRoot}/${att.file_path}`;
+                                                        return (
+                                                            <a
+                                                                key={idx}
+                                                                href={fileUrl}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer" // ...
+                                                                className="flex items-center gap-2 text-xs bg-black/20 p-2 rounded hover:bg-black/40 transition-colors"
+                                                            >
+                                                                <FileText className="w-3 h-3 text-primary" />
+                                                                <span className="truncate max-w-[150px]">{att.file_name}</span>
+                                                            </a>
+                                                        ))}
                                                 </div>
                                             )}
                                         </div>

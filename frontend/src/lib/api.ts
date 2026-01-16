@@ -1,8 +1,18 @@
 import axios from "axios";
 
+// Helper to ensure correct API suffix
+const getBaseUrl = () => {
+    let url = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    // Remove trailing slash if present
+    if (url.endsWith("/")) url = url.slice(0, -1);
+    // Append /api/v1 if not present
+    if (!url.endsWith("/api/v1")) url += "/api/v1";
+    return url;
+};
+
 // Standard production-ready API client
 export const api = axios.create({
-    baseURL: process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api/v1",
+    baseURL: getBaseUrl(),
     headers: {
         "Content-Type": "application/json",
     },

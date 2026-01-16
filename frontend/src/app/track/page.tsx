@@ -392,20 +392,23 @@ export default function TrackPage() {
                                                             {msg.content && <p>{msg.content}</p>}
                                                             {msg.attachments.length > 0 && (
                                                                 <div className="mt-4 space-y-2">
-                                                                    {msg.attachments.map((att, i) => (
-                                                                        <a
-                                                                            key={i}
-                                                                            href={`${process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '')}/${att.file_path}`}
-                                                                            target="_blank"
-                                                                            rel="noopener noreferrer"
-                                                                            className="flex items-center gap-3 bg-black/20 p-3 rounded-lg border border-white/5 hover:bg-black/40 transition-colors group/file"
-                                                                        >
-                                                                            <div className="w-8 h-8 flex items-center justify-center bg-white/10 rounded-md group-hover/file:bg-blue-500/20 transition-colors">
-                                                                                <Search className="w-4 h-4 text-white/40 group-hover/file:text-blue-400" />
-                                                                            </div>
-                                                                            <span className="text-sm font-mono opacity-70 truncate max-w-[200px] group-hover/file:opacity-100">{att.file_name}</span>
-                                                                        </a>
-                                                                    ))}
+                                                                    {msg.attachments.map((att, i) => {
+                                                                        const backendRoot = process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/v1\/?$/, "") || "http://127.0.0.1:8000";
+                                                                        const fileUrl = att.file_path.startsWith("http") ? att.file_path : `${backendRoot}/${att.file_path}`;
+                                                                        return (
+                                                                            <a
+                                                                                key={i}
+                                                                                href={fileUrl}
+                                                                                target="_blank"
+                                                                                rel="noopener noreferrer" // ...
+                                                                                className="flex items-center gap-3 bg-black/20 p-3 rounded-lg border border-white/5 hover:bg-black/40 transition-colors group/file"
+                                                                            >
+                                                                                <div className="w-8 h-8 flex items-center justify-center bg-white/10 rounded-md group-hover/file:bg-blue-500/20 transition-colors">
+                                                                                    <Search className="w-4 h-4 text-white/40 group-hover/file:text-blue-400" />
+                                                                                </div>
+                                                                                <span className="text-sm font-mono opacity-70 truncate max-w-[200px] group-hover/file:opacity-100">{att.file_name}</span>
+                                                                            </a>
+                                                                        ))}
                                                                 </div>
                                                             )}
                                                         </div>
