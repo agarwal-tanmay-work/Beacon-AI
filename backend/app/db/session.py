@@ -9,12 +9,29 @@ db_url = settings.DATABASE_URL
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
 import ssl
+import socket
+from urllib.parse import urlparse, urlunparse
+
+# FORCE IPv4: Manually resolve hostname to IPv4 to bypass uvloop/system IPv6 issues
+# This is critical on Render where IPv6 routing to Supabase can be flaky (Network is unreachable)
+try:
+    parsed = urlparse(db_url)
+    hostname = parsed.hostname
+    if hostname and not hostname.replace('.', '').isdigit(): # Don't resolve if already IP
+        # socket.gethostbyname is strictly IPv4 (AF_INET)
+        ipv4_addr = socket.gethostbyname(hostname)
+        print(f"[NETWORK] Resolved {hostname} to {ipv4_addr} (Forced IPv4)", flush=True)
+        # Replace hostname with IP in the URL
+        new_netloc = parsed.netloc.replace(hostname, ipv4_addr)
+        db_url = urlunparse(parsed._replace(netloc=new_netloc))
+except Exception as e:
+    print(f"[NETWORK] Failed to resolve hostname: {e}", flush=True)
 
 # Configure connection args
 connect_args = {}
 
 # Ensure SSL is enabled for Supabase/Public DBs
-if "supabase" in db_url or "db." in db_url:
+if "supabase" in db_url or "db." in db_url or "127.0.0.1" not in db_url: # Assume remote if not local
     # asyncpg requires an actual SSLContext object, not just a string
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
