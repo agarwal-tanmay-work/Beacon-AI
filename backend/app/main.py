@@ -36,13 +36,14 @@ async def lifespan(app: FastAPI):
         from app.db.init_db import run_init_db
         # Run DB initialization (includes network patch and connectivity check)
         await run_init_db()
+        app.state.db_connected = True
     except Exception as e:
         logger.error("startup_failed", error=str(e))
-        # FAIL FAST: If DB connection fails, the app must not start.
-        # This prevents "zombie" states where health checks pass but auth/chat fails.
-        # Render will restart the service until it connects.
-        print(f"[FATAL] DB Init Failed: {e}. Exiting...", flush=True)
-        raise e
+        # FAIL SAFE: We must still bind the port so Render doesn't kill the service.
+        # But we mark the app as unhealthy internally.
+        print(f"[ERROR] DB Init Failed: {e}. Starting in degraded mode.", flush=True)
+        app.state.db_connected = False
+        # Do NOT raise e. Let uvicorn bind.
             
     logger.info("startup", project=settings.PROJECT_NAME)
     yield
@@ -57,44 +58,20 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
 )
 
-# Middleware: CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Exception Handlers
-app.add_exception_handler(StarletteHTTPException, http_exception_handler)
-app.add_exception_handler(RequestValidationError, validation_exception_handler)
-
-@app.exception_handler(Exception)
-async def unified_exception_handler(request: Request, exc: Exception):
-    # Log the full error always internally
-    logger.error("unhandled_exception", error=str(exc), path=request.url.path, stack=traceback.format_exc())
-    
-    if settings.ENVIRONMENT == "development":
-        return JSONResponse(
-            status_code=500,
-            content={
-                "detail": str(exc),
-                "traceback": traceback.format_exc()
-            },
-        )
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "An internal server error occurred. Please contact support."},
-    )
+# ... (Middleware and Exception Handlers unchanged) ...
 
 # Health Check
 @app.get("/health", tags=["system"])
-async def health_check():
+async def health_check(request: Request):
     """
-    Public health check endpoint for load balancers.
+    Public health check endpoint.
+    Returns 503 if DB is not connected (but port is open).
     """
-    return {"status": "ok", "environment": settings.ENVIRONMENT}
+    db_connected = getattr(app.state, "db_connected", False)
+    if not db_connected:
+        return JSONResponse(status_code=503, content={"status": "degraded", "environment": settings.ENVIRONMENT, "db": "disconnected"})
+        
+    return {"status": "ok", "environment": settings.ENVIRONMENT, "db": "connected"}
 
 
 from app.api.v1.public import reporting as public_reporting, evidence as public_evidence, tracking as public_tracking

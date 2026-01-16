@@ -48,4 +48,6 @@ EXPOSE 8000
 RUN echo "Docker image built successfully"
 
 # Run uvicorn directly (DB init is now handled in app/main.py lifespan)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run uvicorn using shell form to allow $PORT expansion
+# Using "sh -c" explicitly to be safe, though shell form does this implicitly.
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
