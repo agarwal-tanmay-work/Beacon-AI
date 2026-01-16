@@ -23,9 +23,19 @@ async def main():
         from app.models.beacon_update import BeaconUpdate
         from app.models.beacon_message import BeaconMessage
         
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info("remote_db_init_complete")
+        try:
+            # Add timeout to fail fast if connection hangs (e.g. firewall/network issues)
+            # 10 seconds should be plenty for a healthy connection
+            async with asyncio.timeout(10):
+                async with engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+            logger.info("remote_db_init_complete")
+        except TimeoutError:
+            logger.error("remote_db_init_timeout", message="Connection to database timed out after 10s. Check network/firewall/URL settings.")
+            raise
+        except Exception as e:
+            logger.error("remote_db_init_failed", error=str(e))
+            raise
     
     logger.info("db_init_complete")
 
