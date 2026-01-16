@@ -325,8 +325,9 @@ We will investigate and take appropriate action. You've done the right thing by 
         for attempt in range(max_retries + 1):
             try:
                 async with httpx.AsyncClient() as client:
+                    print(f"[LLM_AGENT] Groq API call: attempt {attempt+1}/{max_retries+1}", flush=True)
                     response = await client.post(
-                        LLMAgent.GROQ_API_URL, json=payload, headers=headers, timeout=30.0
+                        LLMAgent.GROQ_API_URL, json=payload, headers=headers, timeout=25.0
                     )
                     
                     if response.status_code == 200:
@@ -476,20 +477,28 @@ Would you like to provide any contact details so we can follow up with you? This
                         return clean_response, final_report_to_save
                         
                     elif response.status_code == 429:
-                        await asyncio.sleep(10)
+                        print(f"[LLM_AGENT] Rate limited. Waiting 5s...", flush=True)
+                        await asyncio.sleep(5)
                         continue # Retry
                         
                     else:
-                        return ("Technical difficulty. Please try again.", None)
+                        print(f"[LLM_AGENT] Groq Error: {response.status_code} - {response.text}", flush=True)
+                        return await LLMAgent._mock_chat(conversation_history, current_state)
 
-            except Exception:
+            except httpx.TimeoutException:
+                print(f"[LLM_AGENT] Timeout on attempt {attempt+1}", flush=True)
                 if attempt < max_retries:
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(1)
                     continue
-                else:
-                    return await LLMAgent._mock_chat(conversation_history, current_state)
+                return await LLMAgent._mock_chat(conversation_history, current_state)
+            except Exception as e:
+                print(f"[LLM_AGENT] Exception on attempt {attempt+1}: {e}", flush=True)
+                if attempt < max_retries:
+                    await asyncio.sleep(1)
+                    continue
+                return await LLMAgent._mock_chat(conversation_history, current_state)
         
-        return ("Technical difficulty. Please try again later.", None)
+        return await LLMAgent._mock_chat(conversation_history, current_state)
     
     @staticmethod
     async def _mock_chat(conversation_history: list, current_state: dict = None) -> Tuple[str, Optional[dict]]:

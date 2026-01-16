@@ -78,7 +78,7 @@ class ReportEngine:
         """
         try:
             async with LocalAsyncSession() as local_session:
-                # 1. Store user message locally
+                print(f"[REPORT_ENGINE] STAGE 1: Store user message: {report_id}", flush=True)
                 user_msg = LocalConversation(
                     session_id=report_id,
                     sender=LocalSenderType.USER,
@@ -182,8 +182,9 @@ class ReportEngine:
 
                 # 3. Forward to LLM (LLM is sole conversational authority)
                 # Pass current_state to LLM so it knows what it ALREADY confirmed
+                print(f"[REPORT_ENGINE] STAGE 2: LLM Request starting: {report_id}", flush=True)
                 llm_response, new_extracted_data = await LLMAgent.chat(conversation_history, current_state)
-                print(f"[REPORT_ENGINE] LLM Response received: {len(llm_response)} chars, new_extracted={bool(new_extracted_data)}")
+                print(f"[REPORT_ENGINE] STAGE 3: LLM Response received: {len(llm_response or '')} chars", flush=True)
                 
                 # Update persistent state if new info discovered
                 if new_extracted_data and state_tracking:
@@ -261,10 +262,12 @@ class ReportEngine:
                         loc_sess.case_id = case_id
                         loc_sess.is_submitted = True
 
+                    print(f"[REPORT_ENGINE] STAGE 4: Finalizing to Supabase: {case_id}", flush=True)
                     # COMMIT PHASE 1 (RAW DATA)
                     await local_session.commit()
                     await supabase_session.commit()
                     
+                    print(f"[REPORT_ENGINE] STAGE 5: Phase 1 Intake Complete: {case_id}", flush=True)
                     logger.info("phase1_intake_complete", case_id=case_id)
 
                     # ---------------------------------------------------------
@@ -287,8 +290,14 @@ class ReportEngine:
                     secret_key=secret_key_display if case_id else None # Return ONLY ONCE
                 )
         
-        except Exception:
-            await supabase_session.rollback()
+        except Exception as e:
+            print(f"[REPORT_ENGINE] ERROR in process_message: {e}", flush=True)
+            try:
+                await local_session.rollback()
+            except: pass
+            try:
+                await supabase_session.rollback()
+            except: pass
             raise
 
     @staticmethod
