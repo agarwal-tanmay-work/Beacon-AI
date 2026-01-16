@@ -1,4 +1,9 @@
 import asyncio
+from app.core.network_utils import force_ipv4_resolution
+
+# Apply network patch immediately to fix Render/Supabase IPv6 issues
+force_ipv4_resolution()
+
 import structlog
 from app.db.local_db import local_engine, init_local_db
 from app.core.config import settings

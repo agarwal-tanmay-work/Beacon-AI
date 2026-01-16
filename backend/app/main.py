@@ -1,4 +1,9 @@
 from contextlib import asynccontextmanager
+from app.core.network_utils import force_ipv4_resolution
+
+# Apply network patch immediately
+force_ipv4_resolution()
+
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
