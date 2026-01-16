@@ -6,7 +6,7 @@ Only data needed by authorities is transferred to Supabase beacon table.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import Column, String, Boolean, Integer, DateTime, Text, JSON, Enum
 from sqlalchemy.orm import declarative_base

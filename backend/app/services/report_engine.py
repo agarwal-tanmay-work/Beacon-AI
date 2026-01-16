@@ -325,50 +325,40 @@ class ReportEngine:
         Initialize a new report session in LOCAL SQLite.
         """
         import hashlib
-        print(f"[REPORT_ENGINE] initialize_report START: id={report_id}", flush=True)
         token_hash = hashlib.sha256(access_token.encode()).hexdigest()
 
-        try:
-            async with LocalAsyncSession() as local_session:
-                # Check if session already exists
-                stmt = select(LocalSession).where(LocalSession.id == report_id)
-                result = await local_session.execute(stmt)
-                existing = result.scalar_one_or_none()
-                
-                if existing:
-                    print(f"[REPORT_ENGINE] Session {report_id} already exists", flush=True)
-                    return
-                
-                print(f"[REPORT_ENGINE] Creating new LocalSession", flush=True)
-                # Create LocalSession
-                new_session = LocalSession(
-                    id=report_id,
-                    access_token_hash=token_hash,
-                    is_active=True,
-                    is_submitted=False
-                )
-                local_session.add(new_session)
+        async with LocalAsyncSession() as local_session:
+            # Check if session already exists
+            stmt = select(LocalSession).where(LocalSession.id == report_id)
+            result = await local_session.execute(stmt)
+            existing = result.scalar_one_or_none()
+            
+            if existing:
+                print(f"[REPORT_ENGINE] Session {report_id} already exists", flush=True)
+                return
+            
+            # Create LocalSession
+            new_session = LocalSession(
+                id=report_id,
+                access_token_hash=token_hash,
+                is_active=True,
+                is_submitted=False
+            )
+            local_session.add(new_session)
 
-                print(f"[REPORT_ENGINE] Creating LocalStateTracking", flush=True)
-                # Initialize state tracking locally
-                state_tracking = LocalStateTracking(
-                    session_id=report_id,
-                    current_step="ACTIVE",
-                    context_data={
-                        "initialized_at": datetime.now(timezone.utc).isoformat(),
-                        "extracted": {}
-                    }
-                )
-                local_session.add(state_tracking)
-                
-                print(f"[REPORT_ENGINE] Committing local session...", flush=True)
-                await local_session.commit()
-                print(f"[REPORT_ENGINE] Initialized local session: {report_id}", flush=True)
-        except Exception as e:
-            print(f"[REPORT_ENGINE] FATAL ERROR in initialize_report: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
-            raise
+            # Initialize state tracking locally
+            state_tracking = LocalStateTracking(
+                session_id=report_id,
+                current_step="ACTIVE",
+                context_data={
+                    "initialized_at": datetime.now(timezone.utc).isoformat(),
+                    "extracted": {}
+                }
+            )
+            local_session.add(state_tracking)
+            await local_session.commit()
+            
+            print(f"[REPORT_ENGINE] Initialized local session: {report_id}", flush=True)
 
     @staticmethod
     async def get_session_status(session_id: str) -> dict:
