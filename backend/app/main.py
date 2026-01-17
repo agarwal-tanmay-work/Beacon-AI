@@ -87,7 +87,7 @@ async def health_check(request: Request):
 
 
 from app.api.v1.public import reporting as public_reporting, evidence as public_evidence, tracking as public_tracking
-from app.api.v1.admin import auth as admin_auth, reports as admin_reports, evidence as admin_evidence, updates as admin_updates
+from app.api.v1.admin import auth as admin_auth, reports as admin_reports, evidence as admin_evidence, updates as admin_updates, files as admin_files
 
 app.include_router(public_reporting.router, prefix=f"{settings.API_V1_STR}/public/reports", tags=["reporting"])
 app.include_router(public_tracking.router, prefix=f"{settings.API_V1_STR}/public", tags=["tracking"]) # Mount at /public so it becomes /public/track
@@ -96,6 +96,7 @@ app.include_router(admin_auth.router, prefix=f"{settings.API_V1_STR}/admin/auth"
 app.include_router(admin_reports.router, prefix=f"{settings.API_V1_STR}/admin/reports", tags=["admin-reports"])
 app.include_router(admin_updates.router, prefix=f"{settings.API_V1_STR}/admin/reports", tags=["admin-updates"]) # Mount at /admin/reports for /{id}/update
 app.include_router(admin_evidence.router, prefix=f"{settings.API_V1_STR}/admin/evidence", tags=["admin-evidence"])
+app.include_router(admin_files.router, prefix=f"{settings.API_V1_STR}/admin/files", tags=["admin-files"])
 
 # Mount Static Files (Uploads)
 UPLOAD_DIR = "uploads"
