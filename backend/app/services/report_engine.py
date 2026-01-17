@@ -217,9 +217,21 @@ class ReportEngine:
                 case_id = None
                 secret_key_display = None
                 
-                # Trigger submission ONLY if placeholder is detected in text
-                has_placeholder = "CASE_ID_PLACEHOLDER" in llm_response.upper()
+                # Trigger submission based on PLACEHOLDERS (Case-insensitive check)
+                # Also check for suspected hallucinated patterns if placeholder is missing but completion tone is detected
+                completion_patterns = [
+                    r"CASE_ID_PLACEHOLDER",
+                    r"SECRET_KEY_PLACEHOLDER",
+                    r"Your Case ID is:? [A-Z0-9_-]+", # Catch hallucinations like BCN-1234
+                    r"Your Secret Key is:? [A-Z0-9_-]+"
+                ]
+                
+                has_placeholder = any(re.search(p, llm_response, re.IGNORECASE) for p in completion_patterns)
+                
                 if has_placeholder:
+                    # Force normalization of hallucinations to our standard placeholders for replacement
+                    llm_response = re.sub(r"BCN-\d+", "CASE_ID_PLACEHOLDER", llm_response, flags=re.IGNORECASE)
+                    
                     case_id = await CaseService.generate_next_case_id(supabase_session)
                     
                     # Generate Secret Key
@@ -227,10 +239,13 @@ class ReportEngine:
                     secret_key_display = f"{raw_hex[:4]}-{raw_hex[4:]}"
                     secret_key_hash = pwd_context.hash(secret_key_display)
                     
-                    # Replace placeholders (Case-insensitive)
-                    import re
+                    # Replace placeholders (Extremely Case-insensitive & Robust)
                     llm_response = re.sub(r"CASE_ID_PLACEHOLDER", case_id, llm_response, flags=re.IGNORECASE)
                     llm_response = re.sub(r"SECRET_KEY_PLACEHOLDER", secret_key_display, llm_response, flags=re.IGNORECASE)
+                    
+                    # Fallback Replacement: If AI still used a weird format like "Case ID is BCN-123", overwrite it
+                    llm_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", rf"\1{case_id}", llm_response, flags=re.I)
+                    llm_response = re.sub(r"(Secret Key is\s+)([A-Z0-9-]+)", rf"\1{secret_key_display}", llm_response, flags=re.I)
                     
                     # Get reported_at timestamp
                     from app.core.time_utils import get_utc_now

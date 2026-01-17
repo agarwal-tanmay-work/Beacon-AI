@@ -32,7 +32,7 @@ Keep responses concise and natural (1–2 short sentences).
 ────────────────────────────────
 
 - Sharing identity is NOT required.
-- NEVER ask for name or personal contact details unless explicitly at the optional step.
+- NEVER ask for name or personal contact details until the specific optional step.
 
 ────────────────────────────────
 🎯 YOUR OBJECTIVE
@@ -43,9 +43,18 @@ Collect details of a corruption incident conversationally. You must gather:
 2. WHERE (City, State, specific Building/Office, Landmark)
 3. WHEN (Date AND Time - both required)
 4. WHO (Names or Roles of officials involved)
-5. EVIDENCE (If any exists)
-6. OPTIONAL CONTACT (If they want to provide it)
-7. OTHER DETAILS (Anything else?)
+5. EVIDENCE (Acknowledge if uploaded or ask if exists)
+6. OPTIONAL CONTACT INFO (Explicitly ask if they want to provide it)
+7. OTHER DETAILS (Ask if anything else remains)
+
+────────────────────────────────
+🧭 CONVERSATION FLOW (STRICT)
+────────────────────────────────
+
+- You must progress logically. Do NOT skip steps unless the user provides the info ahead of time.
+- **GUARDRAILS (Staying on Track)**: If the user provides input that is completely unrelated to corruption reporting or asks off-topic questions (e.g., about weather, recipes, or general chat), acknowledge them briefly and politely pivot back to the report. For example: "I'm here specifically to help you report corruption safely. To continue with your report, could you tell me more about [next required field]?"
+- **OPTIONAL CONTACT INFO**: You MUST ask: "Would you like to provide any contact details so we can follow up with you? This is **COMPLETELY OPTIONAL**. You may say 'no' or 'skip' to remain anonymous." (Use this EXACT bold/caps wording).
+- If a user says "no" or "skip" to an optional step, respect it immediately and move to the next item.
 
 ────────────────────────────────
 🧠 INTELLIGENCE & EXTRACTION
@@ -54,17 +63,18 @@ Collect details of a corruption incident conversationally. You must gather:
 - You are a highly intelligent entity extraction engine.
 - If a user provides multiple details at once (e.g. "Gurugram, Haryana at the RTO office"), extract ALL (City: Gurugram, State: Haryana, Office: RTO).
 - Do NOT re-ask for details already confirmed in the [CONFIRMED FACTS] block.
-- Progress naturally. Don't be rigid.
+- **DATE/TIME**: If a user says "Yesterday at 3 PM", extract both. If they only give one, ask for the other.
 
 ────────────────────────────────
 🧾 FINALIZATION BEHAVIOR
 ────────────────────────────────
 
-Once you have gathered everything and the user confirms they are finished, say EXACTLY this:
+Once you have gathered everything and the user confirms they have finished, say EXACTLY this:
 
 "Thank you for your courage in reporting this. Your Case ID is CASE_ID_PLACEHOLDER. Your Secret Key is SECRET_KEY_PLACEHOLDER. Please save these details to track your case. We will investigate and take appropriate action. You've done the right thing by speaking up."
 
 Do NOT add anything before or after this final message.
+Do NOT hallucinate a Case ID like "BCN-123". You MUST use the placeholder `CASE_ID_PLACEHOLDER`.
 
 ────────────────────────────────
 🧩 STRUCTURED DATA EXTRACTION (INTERNAL)
@@ -78,7 +88,9 @@ Format:
   "where": "",
   "when": "",
   "who": "",
-  "evidence": ""
+  "evidence": "",
+  "contact_info": "",
+  "other_details": ""
 }
 ```
 """
@@ -98,7 +110,10 @@ class LLMAgent:
         # 1. CLEAN HISTORY & STATE
         state = current_state.copy() if current_state else {}
         summary_parts = []
-        for k in ["what", "where", "when", "who", "evidence"]:
+        # Define fields to track
+        track_fields = ["what", "where", "when", "who", "evidence", "contact_info", "other_details"]
+        
+        for k in track_fields:
             val = state.get(k)
             if val and str(val).lower() not in ["...", "", "none", "unknown", "null"]:
                 summary_parts.append(f"- {k.upper()}: {val}")
@@ -143,19 +158,35 @@ class LLMAgent:
                         
                         # Merge with State (Trust LLM's latest extraction if it's not empty)
                         final_report_to_save = state.copy()
-                        for k, v in fresh_extracted.items():
-                            val = str(v).strip()
+                        for k in track_fields:
+                            v = fresh_extracted.get(k)
+                            val = str(v).strip() if v is not None else ""
                             if val and val.lower() not in ["", "none", "unknown", "null", "..."]:
-                                # If the new value is significantly different or more descriptive, use it
+                                # Update if different or currently empty
                                 old_val = str(state.get(k) or "").lower()
                                 if val.lower() != old_val:
                                     final_report_to_save[k] = val
                         
                         clean_response = LLMAgent._clean_response(text_response)
                         
-                        # Placeholder Consistency Fix
-                        if "CASE_ID_PLACEHOLDER" in clean_response.upper() and "CASE_ID_PLACEHOLDER" not in clean_response:
-                             clean_response = clean_response.replace("case_id_placeholder", "CASE_ID_PLACEHOLDER").replace("Case_id_placeholder", "CASE_ID_PLACEHOLDER")
+                        # Placeholder Consistency Fix (Case-insensitive catch-all)
+                        clean_response = re.sub(r"case_id_placeholder", "CASE_ID_PLACEHOLDER", clean_response, flags=re.I)
+                        clean_response = re.sub(r"secret_key_placeholder", "SECRET_KEY_PLACEHOLDER", clean_response, flags=re.I)
+                        
+                        # Fix for hallucinations (BCN-XXXX or similar)
+                        # If the AI hallucinated a case ID format, we try to force the placeholder back if it's the final message
+                        if "case id" in clean_response.lower() and "secret key" in clean_response.lower():
+                            if "CASE_ID_PLACEHOLDER" not in clean_response:
+                                # Replace anything that looks like BCN-#### with the placeholder
+                                clean_response = re.sub(r"BCN-\d+", "CASE_ID_PLACEHOLDER", clean_response)
+                                # If still not there, it might be a different format. 
+                                # We'll do a generic replacement if placeholders are missing in the final block.
+                                if "CASE_ID_PLACEHOLDER" not in clean_response:
+                                    # Very broad check: if it says "Case ID is [some value]", replace [some value]
+                                    clean_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", r"\1CASE_ID_PLACEHOLDER", clean_response, flags=re.I)
+                            
+                            if "SECRET_KEY_PLACEHOLDER" not in clean_response:
+                                clean_response = re.sub(r"(Secret Key is\s+)([A-Z0-9-]+)", r"\1SECRET_KEY_PLACEHOLDER", clean_response, flags=re.I)
 
                         return clean_response, final_report_to_save
                         
@@ -207,7 +238,6 @@ class LLMAgent:
 
     @staticmethod
     async def rewrite_update(raw_text: str) -> str:
-        # (NGO update logic remains unchanged)
         UPDATE_SYSTEM_PROMPT = "Rewrite this NGO update to be neutral and concise for public display."
         api_key = settings.GROQ_API_KEY
         if not api_key: return raw_text
