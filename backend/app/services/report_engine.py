@@ -361,6 +361,33 @@ class ReportEngine:
 
         async def upload_single(ev):
             try:
+                # FIX: If file is already uploaded (e.g. resumption), skip upload
+                if ev.file_path.startswith("supastorage://"):
+                    # Construct metadata from existing info
+                    # Format: supastorage://bucket/year/month/uuid_filename
+                    # Real bucket is 'evidence'
+                    path_suffix = ev.file_path.replace("supastorage://evidence/", "")
+                    
+                    # We need to reconstruction full_url if possible, or leave blank if not needed strictly here
+                    # StorageService normally returns: bucket, path, full_url, file_name, mime_type, size_bytes
+                    
+                    # NOTE: We can't easily get the public URL without re-querying or storing it.
+                    # But for 'evidence_metadata' usage, we might just need the path.
+                    
+                    # Let's try to reconstruct Public URL pattern: {SUPABASE_URL}/storage/v1/object/public/evidence/{path}
+                    from app.core.config import settings
+                    public_url = f"{settings.SUPABASE_URL}/storage/v1/object/public/evidence/{path_suffix}"
+                    
+                    return {
+                        "bucket": "evidence",
+                        "path": path_suffix,
+                        "full_url": public_url,
+                        "file_name": ev.file_name,
+                        "mime_type": ev.mime_type,
+                        "size_bytes": 0, # Unknown, but maybe not critical for flow
+                        "storage_provider": "supabase"
+                    }
+
                 with open(ev.file_path, "rb") as f:
                     file_bytes = f.read()
                 return await StorageService.upload_file(file_bytes, ev.file_name, ev.mime_type)
