@@ -298,6 +298,9 @@ class ReportEngine:
                         
                         print(f"[REPORT_ENGINE] STAGE 5: Phase 1 Intake Complete: {case_id}", flush=True)
                         logger.info(f"phase1_intake_complete: {case_id}")
+                        
+                        # Set Workflow Status to COMPLETED to lock the chat UI
+                        next_step = "COMPLETED"
 
                         # ---------------------------------------------------------
                         # PHASE 2: TRIGGER ASYNC ANALYSIS

@@ -217,15 +217,24 @@ class LLMAgent:
 
     @staticmethod
     def _clean_response(text: str) -> str:
-        # Remove JSON blocks
+        # 1. Remove Markdown Code Blocks
         text = re.sub(r'```json\s*\{[\s\S]*?\}\s*```', '', text, flags=re.DOTALL)
-        # Remove thought blocks
-        text = re.sub(r'<thought>[\s\S]*?</thought>', '', text, flags=re.DOTALL)
-        # Cleanup confirmed facts leaks
-        text = re.sub(r'###\s*\[CONFIRMED FACTS\]\s*###[\s\S]*?##########################', '', text, flags=re.DOTALL)
-        # Cleanup leaking summaries
-        text = re.sub(r'(Confirmed Facts|Summary of Information):.*', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'```\s*\{[\s\S]*?\}\s*```', '', text, flags=re.DOTALL)
         
+        # 2. Remove Thought Blocks
+        text = re.sub(r'<thought>[\s\S]*?</thought>', '', text, flags=re.DOTALL)
+        
+        # 3. Cleanup Confirmed Facts / Summary Leaks
+        text = re.sub(r'###\s*\[CONFIRMED FACTS\]\s*###[\s\S]*?##########################', '', text, flags=re.DOTALL)
+        text = re.sub(r'(Confirmed Facts|Summary of Information):.*', '', text, flags=re.DOTALL | re.IGNORECASE)
+
+        # 4. AGGRESSIVE JSON STRIPPING (At the end of message)
+        # Matches a closing JSON block at the very end of the string, even if no markdown tags
+        # Logic: Look for last occurrence of } and check if it looks like a JSON object started recently
+        # We can simply remove any trailing block that looks like { "key": ... } using regex
+        text = re.sub(r'\s*\{[\s\S]*?"what"[\s\S]*?\}\s*$', '', text, flags=re.DOTALL|re.IGNORECASE) 
+
+        # 5. Final whitespace cleanup
         cleaned = re.sub(r'\n{3,}', '\n\n', text).strip()
         if not cleaned:
             return "I've noted that. What else can you tell me?"
