@@ -106,17 +106,18 @@ class ScoringService:
                     # 2. Layer 1: Deterministic Evidence Processing (Run in threadpool as it's synchronous)
                     evidence_metadata = await run_in_threadpool(EvidenceProcessor.process_evidence, evidence_objs)
                             
-                    # 3. Layer 2: AI Reasoning (with simple background retry for 429s)
+                    # 3. Layer 2: AI Reasoning (with exponential backoff for background rate limits)
                     summary = None
-                    for attempt in range(2):
+                    backoff_times = [5, 15, 30] # Increasing delays
+                    for attempt in range(len(backoff_times)):
                         summary = await GroqService.generate_pro_summary(chat_history)
                         if summary: break
-                        if attempt == 0: 
-                            logger.info("background_scoring_retry_429", case_id=case_id)
-                            await asyncio.sleep(5) # Small wait since it's background
+                        
+                        logger.info("background_scoring_retry", case_id=case_id, attempt=attempt+1, delay=backoff_times[attempt])
+                        await asyncio.sleep(backoff_times[attempt])
                     
                     if not summary:
-                         raise ValueError("AI Scoring summary generation failed (Rate Limited).")
+                         raise ValueError("AI Scoring summary generation failed after retries (Rate Limited).")
  
                     # 3a. Forensic OCR Analysis (Enrichment)
                     # We iterate through processed evidence. If validation passed and we have OCR text, we analyze it.
@@ -175,13 +176,15 @@ class ScoringService:
                     }
                     
                     score_result = None
-                    for attempt in range(2):
+                    for attempt in range(len(backoff_times)):
                         score_result = await GroqService.calculate_credibility_score(chat_history, evidence_metadata, metadata)
                         if score_result: break
-                        if attempt == 0: await asyncio.sleep(5)
+                        
+                        logger.info("background_scoring_calc_retry", case_id=case_id, attempt=attempt+1, delay=backoff_times[attempt])
+                        await asyncio.sleep(backoff_times[attempt])
 
                     if not score_result:
-                         raise ValueError("AI Scoring returned None (Rate Limited).")
+                         raise ValueError("AI Scoring returned None after retries (Rate Limited).")
 
                     # 4. Strict Validation
                     score = max(1, min(100, score_result.credibility_score))

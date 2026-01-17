@@ -22,7 +22,7 @@ class GroqService:
     # Updated Models (Jan 2026)
     # Downgraded for speed and rate-limit resilience
     TEXT_MODEL = "llama-3.1-8b-instant"
-    VISION_MODEL = "llama-3.2-11b-vision-preview"
+    VISION_MODEL = "llama-3.2-11b-vision"
 
     @classmethod
     async def _call_groq(cls, messages: List[Dict[str, Any]], schema_class: Optional[Type[T]] = None, model: str = TEXT_MODEL) -> Optional[T | str]:
