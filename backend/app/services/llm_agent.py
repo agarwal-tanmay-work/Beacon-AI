@@ -268,7 +268,7 @@ class LLMAgent:
                 response = await client.post(
                     LLMAgent.GROQ_API_URL,
                     json={
-                        "model": "llama-3.1-8b-instant",
+                        "model": "llama-3.3-70b-versatile",
                         "messages": [{"role": "system", "content": UPDATE_SYSTEM_PROMPT}, {"role": "user", "content": raw_text}],
                         "temperature": 0.1, "max_tokens": 150
                     },

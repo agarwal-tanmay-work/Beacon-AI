@@ -149,9 +149,19 @@ class ScoringService:
                             # Note: LocalEvidence stores the file_path
                             try:
                                 logger.info("running_forensic_visual", file=ev.file_name)
-                                # Non-blocking read
-                                img_content = await run_in_threadpool(lambda: open(ev.file_path, "rb").read())
                                 
+                                img_content = None
+                                if ev.file_path.startswith("supastorage://"):
+                                    # Remote file: Download first
+                                    from app.services.storage_service import StorageService
+                                    bucket_path = ev.file_path.replace("supastorage://evidence/", "") # Assuming 'evidence' bucket from URI
+                                    # In case the URI structure differs slightly (e.g. includes bucket in different way), we strip prefix.
+                                    # But to be safe, let's use the helper if we had one. For now, strict replacement.
+                                    img_content = await run_in_threadpool(StorageService.download_file, "evidence", bucket_path)
+                                else:
+                                    # Local file (legacy/dev)
+                                    img_content = await run_in_threadpool(lambda: open(ev.file_path, "rb").read())
+
                                 visual_desc = await GroqService.perform_forensic_visual_analysis(
                                     image_bytes=img_content,
                                     mime_type="image/png" if ev.file_name.lower().endswith(".png") else "image/jpeg"
