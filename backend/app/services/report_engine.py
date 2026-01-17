@@ -244,8 +244,10 @@ class ReportEngine:
                         secret_key_hash = pwd_context.hash(secret_key_display)
                         
                         # Replace placeholders (Extremely Case-insensitive & Robust)
-                        llm_response = re.sub(r"CASE_ID_PLACEHOLDER", case_id, llm_response, flags=re.IGNORECASE)
-                        llm_response = re.sub(r"SECRET_KEY_PLACEHOLDER", secret_key_display, llm_response, flags=re.IGNORECASE)
+                        # Replace placeholders (Extremely Case-insensitive & Robust to suffixes)
+                        # We use [\w-]* to swallow any hallucinated suffixes like _ID_1234 or _key_5678
+                        llm_response = re.sub(r"CASE_ID_PLACEHOLDER[\w-]*", case_id, llm_response, flags=re.IGNORECASE)
+                        llm_response = re.sub(r"SECRET_KEY_PLACEHOLDER[\w-]*", secret_key_display, llm_response, flags=re.IGNORECASE)
                         
                         # Fallback Replacement: If AI still used a weird format
                         llm_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", rf"\1{case_id}", llm_response, flags=re.I)
