@@ -234,10 +234,16 @@ export function ChatInterface() {
             };
 
             // Check for next_step / case_id logic
-            if (res.data.next_step === "SUBMITTED") {
+            if (res.data.next_step === "SUBMITTED" || res.data.next_step === "COMPLETED") {
                 setCurrentStep("SUBMITTED");
                 if (res.data.case_id) setFinalCaseId(res.data.case_id);
                 if (res.data.secret_key) setSecretKey(res.data.secret_key);
+                sysMsg.next_step = "SUBMITTED"; // Normalize for UI
+            } else if (res.data.case_id && res.data.secret_key) {
+                // Fallback: If IDs are present, force lock even if status mismatch
+                setCurrentStep("SUBMITTED");
+                setFinalCaseId(res.data.case_id);
+                setSecretKey(res.data.secret_key);
                 sysMsg.next_step = "SUBMITTED";
             } else if (res.data.next_step) {
                 setCurrentStep(res.data.next_step);

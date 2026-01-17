@@ -359,8 +359,9 @@ SCORING RUBRIC (Strictly Enforced):
    - ACTOR/ENVIRONMENT MATCH: If the narrative mentions a specific actor (e.g., Shopkeeper) but the Visual Context describes a different one (e.g., Police Officer), this is a CRITICAL MISMATCH. Score = 0-10.
    - REWARD: If the narrative mentions "cash" or "money" AND Visual Signals show "possible_currency_colors", Score = 25-35.
    - REWARD: If the narrative mentions a location/office AND Visual Signals show "possible_document_layout", Score = 20-30.
+   - VISUAL WEIGHT: Do NOT penalize an image for missing text (OCR) if the Visual Description strongly matches the scene (e.g. corruption event in progress). Text is secondary for photos.
    - CRITICAL PENALTY: If the evidence is entirely unrelated (e.g. ashtray) or shows a role mismatch as noted above.
-   - CRITICAL CONSTRAINT: If the provided Evidence Digest shows "[NO TEXT DETECTED]" for a document claim, and no visual signals match, Score < 10.
+   - CONSTRAINT: If the provided Evidence Digest shows "[NO TEXT DETECTED]" for a document claim, and no visual signals match, Score < 10.
 
 3. BEHAVIORAL RELIABILITY (0-20)
    - Evaluates: Stability, cooperation, natural timing.
