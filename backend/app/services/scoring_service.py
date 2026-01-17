@@ -106,21 +106,25 @@ class ScoringService:
                     # 2. Layer 1: Deterministic Evidence Processing (Run in threadpool as it's synchronous)
                     evidence_metadata = await run_in_threadpool(EvidenceProcessor.process_evidence, evidence_objs)
                             
-                    # 3. Layer 2: AI Reasoning
-                    summary = await GroqService.generate_pro_summary(chat_history)
+                    # 3. Layer 2: AI Reasoning (with simple background retry for 429s)
+                    summary = None
+                    for attempt in range(2):
+                        summary = await GroqService.generate_pro_summary(chat_history)
+                        if summary: break
+                        if attempt == 0: 
+                            logger.info("background_scoring_retry_429", case_id=case_id)
+                            await asyncio.sleep(5) # Small wait since it's background
                     
+                    if not summary:
+                         raise ValueError("AI Scoring summary generation failed (Rate Limited).")
+ 
                     # 3a. Forensic OCR Analysis (Enrichment)
                     # We iterate through processed evidence. If validation passed and we have OCR text, we analyze it.
                     for ev in evidence_metadata:
                         if ev.file_type == "image" and ev.ocr_text_snippet and len(ev.ocr_text_snippet) > 10:
-                            # We limit to snippet to avoid huge context, or if we had full text stored, we'd use that.
-                            # For now, using the snippet is consistent with the simple model.
-                            # But ideally we want MORE than the snippet if available. 
-                            # Since we don't store full text in metadata, we trust the snippet is representative or lengthy enough.
-                            
                             logger.info("running_forensic_ocr", file=ev.file_name)
                             analysis = await GroqService.perform_forensic_ocr_analysis(
-                                ocr_text=ev.ocr_text_snippet, # In real app, pass full text
+                                ocr_text=ev.ocr_text_snippet,
                                 narrative_summary=summary
                             )
                             if analysis:
@@ -129,7 +133,6 @@ class ScoringService:
                     # 3b. Forensic Audio Analysis (Enrichment)
                     for ev in evidence_metadata:
                         if ev.file_type == "audio" and ev.audio_transcript_snippet and len(ev.audio_transcript_snippet) > 10:
-                            # Skip error messages
                             if ev.audio_transcript_snippet.startswith("["):
                                 continue
                                 
@@ -137,7 +140,7 @@ class ScoringService:
                             audio_analysis = await GroqService.perform_forensic_audio_analysis(
                                 transcript_text=ev.audio_transcript_snippet,
                                 narrative_summary=summary,
-                                audio_metadata={"clarity": "medium"}  # Basic metadata
+                                audio_metadata={"clarity": "medium"}
                             )
                             if audio_analysis:
                                 ev.forensic_audio_analysis = audio_analysis
@@ -145,21 +148,15 @@ class ScoringService:
                     # 3c. Forensic Visual Analysis (Enrichment)
                     for ev in evidence_metadata:
                         if ev.file_type == "image":
-                            # We fetch the raw content for vision analysis
-                            # Note: LocalEvidence stores the file_path
                             try:
                                 logger.info("running_forensic_visual", file=ev.file_name)
                                 
                                 img_content = None
                                 if ev.file_path.startswith("supastorage://"):
-                                    # Remote file: Download first
                                     from app.services.storage_service import StorageService
-                                    bucket_path = ev.file_path.replace("supastorage://evidence/", "") # Assuming 'evidence' bucket from URI
-                                    # In case the URI structure differs slightly (e.g. includes bucket in different way), we strip prefix.
-                                    # But to be safe, let's use the helper if we had one. For now, strict replacement.
+                                    bucket_path = ev.file_path.replace("supastorage://evidence/", "")
                                     img_content = await run_in_threadpool(StorageService.download_file, "evidence", bucket_path)
                                 else:
-                                    # Local file (legacy/dev)
                                     img_content = await run_in_threadpool(lambda: open(ev.file_path, "rb").read())
 
                                 visual_desc = await GroqService.perform_forensic_visual_analysis(
@@ -170,16 +167,21 @@ class ScoringService:
                                     ev.object_labels.append(f"context: {visual_desc}")
                             except Exception as e:
                                 logger.warning("visual_forensic_failed", error=str(e))
+
                     metadata = {
                         "evidence_count": len(evidence_objs),
                         "timestamp": str(datetime.now(timezone.utc)),
-                        "layer1_flags": [m.model_dump() for m in evidence_metadata] # Now includes forensic_analysis
+                        "layer1_flags": [m.model_dump() for m in evidence_metadata]
                     }
                     
-                    score_result = await GroqService.calculate_credibility_score(chat_history, evidence_metadata, metadata)
-                    
+                    score_result = None
+                    for attempt in range(2):
+                        score_result = await GroqService.calculate_credibility_score(chat_history, evidence_metadata, metadata)
+                        if score_result: break
+                        if attempt == 0: await asyncio.sleep(5)
+
                     if not score_result:
-                         raise ValueError("AI Scoring returned None.")
+                         raise ValueError("AI Scoring returned None (Rate Limited).")
 
                     # 4. Strict Validation
                     score = max(1, min(100, score_result.credibility_score))
