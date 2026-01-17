@@ -39,7 +39,7 @@ class AdminReportSchema(BaseModel):
     id: uuid.UUID
     status: str
     priority: str
-    credibility_score: int
+    credibility_score: Optional[int] = None
     created_at: Any
     case_id: str
     incident_summary: Optional[str] = None
@@ -81,8 +81,10 @@ async def get_reports(
             status = raw_status
         
         # Priority Logic
-        score = b.credibility_score or 0
-        if score >= 75:
+        score = b.credibility_score
+        if score is None:
+            priority = "Pending"
+        elif score >= 75:
             priority = "High"
         elif score >= 40:
             priority = "Medium"
@@ -129,8 +131,10 @@ async def get_report_detail(
         status = raw_status
     
     # Priority Logic
-    score = case.credibility_score or 0
-    if score >= 75:
+    score = case.credibility_score
+    if score is None:
+        priority = "Pending"
+    elif score >= 75:
         priority = "High"
     elif score >= 40:
         priority = "Medium"
@@ -332,3 +336,48 @@ async def upload_admin_file(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+
+@router.post("/{id}/analyze", status_code=202)
+async def trigger_reanalysis(
+    id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Manually trigger or re-run the background scoring analysis.
+    Useful for cases that failed due to rate limits or decommissioning.
+    """
+    case = await db.get(Beacon, id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+        
+    from app.services.scoring_service import ScoringService
+    from fastapi import BackgroundTasks
+    
+    # Reset analysis status so it doesn't look stuck if it was 'pending' but errored
+    case.analysis_status = "pending"
+    case.analysis_attempts = 0
+    await db.commit()
+    
+    # We need to pass conversation history
+    # The scoring service usually fetches it itself or receives it.
+    # In run_background_scoring, it's fetched from LocalConversation.
+    
+    # Need to find report_id in LocalSession
+    from sqlalchemy import select
+    from app.models.local_models import LocalSession, LocalAsyncSession
+    
+    async with LocalAsyncSession() as local_db:
+        stmt = select(LocalSession).where(LocalSession.case_id == case.case_id)
+        res = await local_db.execute(stmt)
+        lsess = res.scalar_one_or_none()
+        
+        if not lsess:
+             raise HTTPException(status_code=404, detail="Original chat session not found for re-analysis")
+        
+        # Trigger background task
+        # We simulate the BackgroundTasks object if not provided in dependency (but here we are in an endpoint)
+        from fastapi import BackgroundTasks
+        bt = BackgroundTasks()
+        bt.add_task(ScoringService.run_background_scoring, lsess.id, db)
+        # Note: In FastAPI, return the background tasks object for it to execute
+        return {"message": "Analysis triggered manually", "case_id": case.case_id}

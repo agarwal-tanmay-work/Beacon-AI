@@ -254,11 +254,40 @@ export default function CaseDetailPage() {
                 </div>
 
                 {/* Credibility Score */}
-                <div className="p-4 bg-card border border-border rounded-xl">
-                    <span className="text-muted-foreground text-xs uppercase tracking-wider">Credibility Score</span>
-                    <div className={clsx("text-2xl font-bold mt-1", (caseData.credibility_score || 0) > 70 ? "text-green-500" : "text-yellow-500")}>
-                        {caseData.credibility_score !== null && caseData.credibility_score !== undefined ? `${caseData.credibility_score}%` : "Pending"}
+                <div className="p-4 bg-card border border-border rounded-xl flex flex-col justify-between">
+                    <div>
+                        <span className="text-muted-foreground text-xs uppercase tracking-wider">Credibility Score</span>
+                        <div className={clsx(
+                            "text-2xl font-bold mt-1",
+                            caseData.credibility_score === null ? "text-muted-foreground" :
+                                caseData.credibility_score > 70 ? "text-green-500" : "text-yellow-500"
+                        )}>
+                            {caseData.credibility_score !== null && caseData.credibility_score !== undefined
+                                ? `${caseData.credibility_score}%`
+                                : "Pending Analysis"}
+                        </div>
                     </div>
+                    {caseData.credibility_score === null && (
+                        <button
+                            disabled={submitting}
+                            onClick={async () => {
+                                setSubmitting(true);
+                                try {
+                                    await api.post(`/admin/reports/${caseId}/analyze`);
+                                    alert("AI Analysis re-queued. Please refresh in a few moments.");
+                                    fetchCaseData();
+                                } catch (err) {
+                                    console.error(err);
+                                    alert("Failed to trigger analysis.");
+                                } finally {
+                                    setSubmitting(false);
+                                }
+                            }}
+                            className="mt-2 text-[10px] bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 px-2 py-1 rounded transition-colors"
+                        >
+                            {submitting ? "Queuing..." : "Recalculate Analysis"}
+                        </button>
+                    )}
                 </div>
 
                 {/* Reported On */}

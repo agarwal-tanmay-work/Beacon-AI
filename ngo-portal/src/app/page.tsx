@@ -54,11 +54,12 @@ export default function Dashboard() {
     }
   }
 
-  const getPriorityColor = (priority: ReportPriority) => {
+  const getPriorityColor = (priority: string) => {
     switch (priority) {
       case 'High': return "text-red-500 font-bold";
       case 'Medium': return "text-yellow-500 font-semibold";
       case 'Low': return "text-blue-500";
+      case 'Pending': return "text-muted-foreground italic";
       default: return "text-gray-500";
     }
   }
