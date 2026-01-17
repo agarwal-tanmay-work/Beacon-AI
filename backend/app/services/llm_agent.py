@@ -104,8 +104,8 @@ class LLMAgent:
     """Groq-powered LLM Agent."""
     
     GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-    # Updated to Llama 3.3 70B for "Very smart" reasoning
-    GROQ_MODEL = "llama-3.3-70b-versatile"
+    # Downgraded to 8B for faster response and higher rate limits
+    GROQ_MODEL = "llama-3.1-8b-instant"
     
     @staticmethod
     async def chat(conversation_history: list, current_state: dict = None) -> Tuple[str, Optional[dict]]:
@@ -150,71 +150,68 @@ class LLMAgent:
             "Content-Type": "application/json"
         }
         
-        # 4. API CALL WITH RETRIES
-        max_retries = 2
-        for attempt in range(max_retries + 1):
-            try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(LLMAgent.GROQ_API_URL, json=payload, headers=headers, timeout=25.0)
+        # 4. API CALL (FAIL-FAST STRATEGY)
+        # We try ONCE. If rate limited, we fail immediately to prevent frontend freezing.
+        try:
+            async with httpx.AsyncClient() as client:
+                # Reduced timeout to 10s as requested
+                response = await client.post(LLMAgent.GROQ_API_URL, json=payload, headers=headers, timeout=10.0)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    text_response = data["choices"][0]["message"]["content"]
                     
-                    if response.status_code == 200:
-                        data = response.json()
-                        text_response = data["choices"][0]["message"]["content"]
-                        
-                        # Extract fresh JSON
-                        fresh_extracted = LLMAgent._extract_report(text_response) or {}
-                        
-                        # Merge with State (Trust LLM's latest extraction if it's not empty)
-                        final_report_to_save = state.copy()
-                        for k in track_fields:
-                            v = fresh_extracted.get(k)
-                            val = str(v).strip() if v is not None else ""
-                            if val and val.lower() not in ["", "none", "unknown", "null", "..."]:
-                                # Update if different or currently empty
-                                old_val = str(state.get(k) or "").lower()
-                                if val.lower() != old_val:
-                                    final_report_to_save[k] = val
-                        
-                        clean_response = LLMAgent._clean_response(text_response)
-                        
-                        # Placeholder Consistency Fix (Case-insensitive catch-all)
-                        clean_response = re.sub(r"case_id_placeholder", "CASE_ID_PLACEHOLDER", clean_response, flags=re.I)
-                        clean_response = re.sub(r"secret_key_placeholder", "SECRET_KEY_PLACEHOLDER", clean_response, flags=re.I)
-                        
-                        # Fix for hallucinations (BCN-XXXX or similar)
-                        # If the AI hallucinated a case ID format, we try to force the placeholder back if it's the final message
-                        if "case id" in clean_response.lower() and "secret key" in clean_response.lower():
+                    # Extract fresh JSON
+                    fresh_extracted = LLMAgent._extract_report(text_response) or {}
+                    
+                    # Merge with State (Trust LLM's latest extraction if it's not empty)
+                    final_report_to_save = state.copy()
+                    for k in track_fields:
+                        v = fresh_extracted.get(k)
+                        val = str(v).strip() if v is not None else ""
+                        if val and val.lower() not in ["", "none", "unknown", "null", "..."]:
+                            # Update if different or currently empty
+                            old_val = str(state.get(k) or "").lower()
+                            if val.lower() != old_val:
+                                final_report_to_save[k] = val
+                    
+                    clean_response = LLMAgent._clean_response(text_response)
+                    
+                    # Placeholder Consistency Fix (Case-insensitive catch-all)
+                    clean_response = re.sub(r"case_id_placeholder", "CASE_ID_PLACEHOLDER", clean_response, flags=re.I)
+                    clean_response = re.sub(r"secret_key_placeholder", "SECRET_KEY_PLACEHOLDER", clean_response, flags=re.I)
+                    
+                    # Fix for hallucinations (BCN-XXXX or similar)
+                    if "case id" in clean_response.lower() and "secret key" in clean_response.lower():
+                        if "CASE_ID_PLACEHOLDER" not in clean_response:
+                            clean_response = re.sub(r"BCN-\d+", "CASE_ID_PLACEHOLDER", clean_response)
                             if "CASE_ID_PLACEHOLDER" not in clean_response:
-                                # Replace anything that looks like BCN-#### with the placeholder
-                                clean_response = re.sub(r"BCN-\d+", "CASE_ID_PLACEHOLDER", clean_response)
-                                # If still not there, it might be a different format. 
-                                # We'll do a generic replacement if placeholders are missing in the final block.
-                                if "CASE_ID_PLACEHOLDER" not in clean_response:
-                                    # Very broad check: if it says "Case ID is [some value]", replace [some value]
-                                    clean_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", r"\1CASE_ID_PLACEHOLDER", clean_response, flags=re.I)
-                            
-                            if "SECRET_KEY_PLACEHOLDER" not in clean_response:
-                                clean_response = re.sub(r"(Secret Key is\s+)([A-Z0-9-]+)", r"\1SECRET_KEY_PLACEHOLDER", clean_response, flags=re.I)
+                                clean_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", r"\1CASE_ID_PLACEHOLDER", clean_response, flags=re.I)
+                        
+                        if "SECRET_KEY_PLACEHOLDER" not in clean_response:
+                            clean_response = re.sub(r"(Secret Key is\s+)([A-Z0-9-]+)", r"\1SECRET_KEY_PLACEHOLDER", clean_response, flags=re.I)
 
-                        return clean_response, final_report_to_save
-                        
-                    elif response.status_code == 429:
-                        print(f"[LLM_AGENT] Rate limit hit. Sleeping 30s...", flush=True)
-                        await asyncio.sleep(30)
-                        continue
-                    else:
-                        break # Fallback to mock
-                        
-            except Exception as e:
-                print(f"[LLM_AGENT] Attempt {attempt+1} failed: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
-                if attempt < max_retries: 
-                    await asyncio.sleep(1)
+                    return clean_response, final_report_to_save
+
+                elif response.status_code == 429:
+                    print(f"[LLM_AGENT] Rate limit hit (429). Returning fallback immediately.", flush=True)
+                    return "I'm currently experiencing very high traffic interactions. Please try sending your message again in a few seconds.", state
+                
                 else:
-                    print(f"[LLM_AGENT] All retries exhausted, falling back to mock", flush=True)
-        
-        print(f"[LLM_AGENT] Falling back to mock chat", flush=True)
+                    print(f"[LLM_AGENT] API Error {response.status_code}: {response.text}", flush=True)
+                    # Fall through to mock
+
+        except httpx.TimeoutException:
+            print("[LLM_AGENT] Groq API timed out (10s). Returning fallback.", flush=True)
+            return "I'm having a little trouble connecting to the server. Could you please say that again?", state
+            
+        except Exception as e:
+            print(f"[LLM_AGENT] Unexpected error during chat: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+
+        # Final Fallback
+        print(f"[LLM_AGENT] Falling back to generic response", flush=True)
         return await LLMAgent._mock_chat(conversation_history, current_state)
 
     @staticmethod
@@ -272,12 +269,12 @@ class LLMAgent:
                 response = await client.post(
                     LLMAgent.GROQ_API_URL,
                     json={
-                        "model": "llama-3.3-70b-versatile",
+                        "model": "llama-3.1-8b-instant",
                         "messages": [{"role": "system", "content": UPDATE_SYSTEM_PROMPT}, {"role": "user", "content": raw_text}],
                         "temperature": 0.1, "max_tokens": 150
                     },
                     headers={"Authorization": f"Bearer {api_key}"},
-                    timeout=20.0
+                    timeout=10.0
                 )
                 if response.status_code == 200:
                     return response.json()["choices"][0]["message"]["content"].strip()

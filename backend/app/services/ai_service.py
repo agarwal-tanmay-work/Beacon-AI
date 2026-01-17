@@ -17,10 +17,11 @@ class GroqService:
     """
     
     BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
-    TIMEOUT = 60.0 
+    TIMEOUT = 10.0 # Reduced from 60.0 for fail-fast
     
     # Updated Models (Jan 2026)
-    TEXT_MODEL = "llama-3.3-70b-versatile"
+    # Downgraded for speed and rate-limit resilience
+    TEXT_MODEL = "llama-3.1-8b-instant"
     VISION_MODEL = "llama-3.2-90b-vision-preview"
 
     @classmethod
@@ -58,6 +59,10 @@ class GroqService:
                     timeout=cls.TIMEOUT
                 )
                 
+                if response.status_code == 429:
+                    logger.error("groq_rate_limit_hit", status=429)
+                    return None
+                    
                 if response.status_code != 200:
                     logger.error("groq_api_error", status=response.status_code, body=response.text[:500])
                     return None
@@ -110,7 +115,7 @@ class GroqService:
             ]
         }]
         result_text = await cls._call_groq(messages, model=cls.VISION_MODEL)
-        return {"analysis": result_text if result_text else "Analysis failed"}
+        return {"analysis": result_text if result_text else "Visual analysis unavailable (Rate Limited)"}
 
     @classmethod
     async def perform_forensic_ocr_analysis(cls, ocr_text: str, narrative_summary: str) -> Optional[Any]: # Returns ForensicOCRAnalysis schema
