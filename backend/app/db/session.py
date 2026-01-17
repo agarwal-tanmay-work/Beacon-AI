@@ -60,9 +60,9 @@ if "supabase" in db_url or "db." in db_url or "127.0.0.1" not in db_url: # Assum
     # to behave like 'sslmode=require' without 'verify-full'.
     connect_args["ssl"] = ctx
 
-# If using Supabase Transaction Pooler (port 6543), we must disable prepared statements
+# If using Supabase Transaction Pooler (port 6543 OR explicit pooler hostname), we must disable prepared statements
 # (Though we are currently on 5432, we keep this logic just in case)
-if ":6543" in db_url:
+if ":6543" in db_url or "pooler.supabase.com" in db_url:
     connect_args["statement_cache_size"] = 0
 
 engine = create_async_engine(
