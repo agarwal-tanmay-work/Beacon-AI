@@ -247,9 +247,17 @@ class ReportEngine:
                         llm_response = re.sub(r"CASE_ID_PLACEHOLDER", case_id, llm_response, flags=re.IGNORECASE)
                         llm_response = re.sub(r"SECRET_KEY_PLACEHOLDER", secret_key_display, llm_response, flags=re.IGNORECASE)
                         
-                        # Fallback Replacement: If AI still used a weird format like "Case ID is BCN-123", overwrite it
+                        # Fallback Replacement: If AI still used a weird format
                         llm_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", rf"\1{case_id}", llm_response, flags=re.I)
-                        llm_response = re.sub(r"(Secret Key is\s+)([A-Z0-9-]+)", rf"\1{secret_key_display}", llm_response, flags=re.I)
+                        # Fix for Secret Key: If AI output "Your - X" or "Key is X", try to replace. 
+                        # But most importantly, if we still don't see the key, we will APPEND it below.
+                        llm_response = re.sub(r"(Secret Key is\s*|Your - )([A-Z0-9-]+)", rf"Secret Key is {secret_key_display}", llm_response, flags=re.I)
+
+                        # FINAL SAFETY NET: If Secret Key is NOT in the text, append it.
+                        if secret_key_display not in llm_response and "SECRET_KEY_PLACEHOLDER" not in llm_response:
+                             # Strip any trailing "Your - " gibberish at the end
+                             llm_response = re.sub(r"Your - \s*$", "", llm_response).strip()
+                             llm_response += f"\n\nYour Secret Key is {secret_key_display}. Please save this."
                         
                         # Get reported_at timestamp
                         from app.core.time_utils import get_utc_now
