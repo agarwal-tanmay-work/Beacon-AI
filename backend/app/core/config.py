@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # Supabase Storage & Client
     SUPABASE_URL: str
     SUPABASE_KEY: str
+    SUPABASE_SERVICE_ROLE_KEY: Union[str, None] = None
 
     # AI
     GEMINI_API_KEY: str = ""

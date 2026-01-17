@@ -26,31 +26,50 @@ class StorageService:
     @classmethod
     async def upload_file(cls, file_bytes: bytes, file_name: str, mime_type: str) -> Dict[str, str]:
         """
-        Uploads a file to Supabase Storage.
-        Returns dict with 'path', 'full_url', 'bucket'.
-        FALLBACK: If upload fails (e.g. RLS issues), returns a metadata dict indicating local storage fallback.
+        Uploads a file to Supabase Storage using Direct HTTP API to ensure Service Role Key is used.
+        Directly bypasses RLS policies if the Service Role Key is correct.
         """
+        import httpx
+        from datetime import datetime, timezone
+        
         try:
-            client = cls.get_client()
+            # Prefer Service Role Key for backend operations
+            api_key = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_KEY
+            base_url = settings.SUPABASE_URL
             
-            # Generate a unique path to avoid collisions
-            # structure: <year>/<month>/<uuid>_<filename>
-            from datetime import datetime, timezone
+            if not api_key:
+                raise ValueError("Missing Supabase API Key")
+
+            # Generate path
             now = datetime.now(timezone.utc)
             unique_name = f"{uuid.uuid4()}_{file_name}"
             file_path = f"{now.year}/{now.month}/{unique_name}"
             
-            bucket = client.storage.from_(cls.BUCKET_NAME)
-
-            # Upload
-            res = bucket.upload(
-                path=file_path,
-                file=file_bytes,
-                file_options={"content-type": mime_type}
-            )
+            # Direct API Endpoint: {supabase_url}/storage/v1/object/{bucket}/{path}
+            url = f"{base_url}/storage/v1/object/{cls.BUCKET_NAME}/{file_path}"
             
-            # Get Public URL
-            public_url = bucket.get_public_url(file_path)
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "apikey": api_key,
+                "Content-Type": mime_type,
+                "x-upsert": "true" 
+            }
+            
+            # Determine timeout (usually longer for uploads)
+            timeout = httpx.Timeout(60.0)
+            
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(url, content=file_bytes, headers=headers)
+                
+                if response.status_code not in range(200, 300):
+                    # Try to parse error
+                    error_text = response.text
+                    logger.error("storage_upload_http_error", status=response.status_code, response=error_text)
+                    raise Exception(f"Supabase Upload Failed: {response.status_code} - {error_text}")
+
+            # Construct Public URL
+            # Format: {supabase_url}/storage/v1/object/public/{bucket}/{path}
+            public_url = f"{base_url}/storage/v1/object/public/{cls.BUCKET_NAME}/{file_path}"
             
             return {
                 "bucket": cls.BUCKET_NAME,

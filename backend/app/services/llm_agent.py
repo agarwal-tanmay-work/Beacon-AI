@@ -100,7 +100,8 @@ class LLMAgent:
     """Groq-powered LLM Agent."""
     
     GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-    GROQ_MODEL = "llama-3.1-8b-instant"
+    # Updated to Llama 3.3 70B for "Very smart" reasoning
+    GROQ_MODEL = "llama-3.3-70b-versatile"
     
     @staticmethod
     async def chat(conversation_history: list, current_state: dict = None) -> Tuple[str, Optional[dict]]:
