@@ -103,8 +103,10 @@ class LLMAgent:
     
     @staticmethod
     async def chat(conversation_history: list, current_state: dict = None) -> Tuple[str, Optional[dict]]:
+        print(f"[LLM_AGENT] chat() called with {len(conversation_history)} messages", flush=True)
         api_key = settings.GROQ_API_KEY
         if not api_key:
+            print(f"[LLM_AGENT] No API key found, using mock", flush=True)
             return await LLMAgent._mock_chat(conversation_history, current_state)
 
         # 1. CLEAN HISTORY & STATE
@@ -197,9 +199,15 @@ class LLMAgent:
                         break # Fallback to mock
                         
             except Exception as e:
-                print(f"[LLM_AGENT] Attempt {attempt+1} failed: {e}")
-                if attempt < max_retries: await asyncio.sleep(1)
+                print(f"[LLM_AGENT] Attempt {attempt+1} failed: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                if attempt < max_retries: 
+                    await asyncio.sleep(1)
+                else:
+                    print(f"[LLM_AGENT] All retries exhausted, falling back to mock", flush=True)
         
+        print(f"[LLM_AGENT] Falling back to mock chat", flush=True)
         return await LLMAgent._mock_chat(conversation_history, current_state)
 
     @staticmethod
