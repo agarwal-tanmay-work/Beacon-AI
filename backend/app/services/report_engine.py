@@ -308,8 +308,11 @@ class ReportEngine:
                         # PHASE 2: TRIGGER ASYNC ANALYSIS
                         # ---------------------------------------------------------
                         if background_tasks:
+                            print(f"[REPORT_ENGINE] Triggering automated background scoring for: {case_id}", flush=True)
                             from app.services.scoring_service import ScoringService
                             background_tasks.add_task(ScoringService.run_background_scoring, report_id, case_id)
+                        else:
+                            print(f"[REPORT_ENGINE] WARNING: No background_tasks object found. Automated analysis NOT triggered for: {case_id}", flush=True)
                     
                     except Exception as e:
                         print(f"[REPORT_ENGINE] CRITICAL FINALIZATION ERROR: {e}", flush=True)
