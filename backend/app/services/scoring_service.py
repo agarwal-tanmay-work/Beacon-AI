@@ -46,20 +46,62 @@ class ScoringService:
                     for ev in evidence_objs:
                         if ev.file_path.startswith("supastorage://"):
                             try:
-                                # Format: supastorage://bucket/path/to/file
-                                parts = ev.file_path.replace("supastorage://", "").split("/", 1)
-                                if len(parts) == 2:
-                                    bucket_name, remote_path = parts
-                                    file_bytes = await run_in_threadpool(StorageService.download_file, bucket_name, remote_path)
+                                # Handle Local Fallback
+                                if "local_fallback" in ev.file_path:
+                                    # Logic: The content should have been saved in the metadata if we used fallback
+                                    # However, LocalEvidence object might NOT have it populated by default unless we specifically query for it
+                                    # OR we stored it in 'context_data' or similar?
+                                    # Wait, in report_engine we saved it to `record.evidence_data` (metadata).
+                                    # LocalEvidence in `local_models.py` usually mirrors this.
+                                    # Let's hope `ev` has access to the full metadata. 
+                                    # If `ev` is a LocalEvidence instance, does it have the base64 content?
+                                    # If NOT, we must fetch the `LocalSession` again and look at `evidence_data`.
                                     
-                                    # Save to temp file
+                                    # EFFICIENT FIX:
+                                    logger.info("using_local_fallback_evidence", file=ev.file_name)
+                                    stmt_meta = select(LocalConversation).where(LocalConversation.session_id == session_id).limit(1)
+                                    # Actually we need LocalSession object
+                                    # `LocalEvidence` is linked to `LocalSession`? 
+                                    # Let's just query the LocalSession table directly using session_id (which is report_id)
+                                    from app.models.local_models import LocalSession
+                                    stmt_ls = select(LocalSession).where(LocalSession.id == session_id)
+                                    res_ls = await local_session.execute(stmt_ls)
+                                    ls_rec = res_ls.scalar_one_or_none()
+                                    
+                                    file_bytes = None
+                                    if ls_rec and ls_rec.evidence_data:
+                                        for item in ls_rec.evidence_data:
+                                            # Match by name
+                                            if item.get("name") == ev.file_name:
+                                                 if "content_b64" in item:
+                                                     import base64
+                                                     file_bytes = base64.b64decode(item["content_b64"])
+                                                 break
+                                    
+                                    if not file_bytes:
+                                        logger.warning("local_fallback_content_missing", file=ev.file_name)
+                                        continue
+                                        
+                                else:
+                                    # Standard Supabase Download
+                                    # Format: supastorage://bucket/path/to/file
+                                    parts = ev.file_path.replace("supastorage://", "").split("/", 1)
+                                    if len(parts) == 2:
+                                        bucket_name, remote_path = parts
+                                        file_bytes = await run_in_threadpool(StorageService.download_file, bucket_name, remote_path)
+                                    else:
+                                        continue
+
+                                # Save to temp file (Common for both paths)
+                                if file_bytes:
                                     suffix = os.path.splitext(ev.file_name)[1]
                                     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
                                         tmp.write(file_bytes)
                                         ev.file_path = tmp.name # Update in-memory path for processor
-                                        logger.info("downloaded_remote_evidence", case_id=case_id, temp_path=ev.file_path)
+                                        logger.info("evidence_ready_for_analysis", case_id=case_id, temp_path=ev.file_path)
+
                             except Exception as dl_err:
-                                logger.error("remote_download_failed", file=ev.file_name, error=str(dl_err))
+                                logger.error("evidence_download_failed", file=ev.file_name, error=str(dl_err))
 
                     # 2. Layer 1: Deterministic Evidence Processing (Run in threadpool as it's synchronous)
                     evidence_metadata = await run_in_threadpool(EvidenceProcessor.process_evidence, evidence_objs)

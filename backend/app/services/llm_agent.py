@@ -194,7 +194,8 @@ class LLMAgent:
                         return clean_response, final_report_to_save
                         
                     elif response.status_code == 429:
-                        await asyncio.sleep(5)
+                        print(f"[LLM_AGENT] Rate limit hit. Sleeping 20s...", flush=True)
+                        await asyncio.sleep(20)
                         continue
                     else:
                         break # Fallback to mock
