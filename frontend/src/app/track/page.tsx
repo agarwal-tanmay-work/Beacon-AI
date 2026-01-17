@@ -158,7 +158,7 @@ export default function TrackPage() {
                 />
             </div>
 
-            <div className="relative z-10 w-full max-w-4xl mx-auto px-6 pt-6 pb-20 flex flex-col items-center gap-12">
+            <div className="relative z-10 w-full max-w-4xl mx-auto px-6 pt-6 pb-20 flex flex-col items-center gap-8 md:gap-12">
                 {/* Header */}
                 <div className="text-center space-y-4">
                     <motion.div
@@ -190,7 +190,7 @@ export default function TrackPage() {
                 <motion.div
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    className="w-full max-w-2xl bg-white/[0.03] border border-white/10 backdrop-blur-2xl rounded-3xl p-10 shadow-2xl relative overflow-hidden group"
+                    className="w-full max-w-2xl bg-white/[0.03] border border-white/10 backdrop-blur-2xl rounded-3xl p-6 md:p-10 shadow-2xl relative overflow-hidden group"
                 >
                     <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 

@@ -108,10 +108,10 @@ export function FAQSection({
     ];
 
     return (
-        <section className={cn("pt-24 pb-2 bg-black text-white relative overflow-hidden", className)}>
+        <section className={cn("pt-12 md:pt-24 pb-2 bg-black text-white relative overflow-hidden", className)}>
             <div className="container mx-auto px-4 md:px-6 relative z-10">
                 {/* Header */}
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-16 gap-8">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 md:mb-16 gap-8">
                     <div className="max-w-2xl">
                         <h3 className="text-secondary-foreground font-semibold mb-2">{subtitle}</h3>
                         <h2 className="text-4xl md:text-5xl font-bold mb-4 tracking-tight">{title}</h2>

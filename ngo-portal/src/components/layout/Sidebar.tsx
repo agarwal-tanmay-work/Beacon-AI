@@ -16,7 +16,7 @@ export function Sidebar() {
     const pathname = usePathname();
 
     return (
-        <div className="flex h-screen w-64 flex-col fixed inset-y-0 z-50 bg-card border-r border-border">
+        <div className="flex w-full h-auto relative flex-col md:w-64 md:h-screen md:fixed md:inset-y-0 z-50 bg-card border-b md:border-b-0 md:border-r border-border">
             <div className="flex h-16 shrink-0 items-center px-6 border-b border-border">
                 <Shield className="h-8 w-8 text-primary mr-2" />
                 <span className="text-lg font-bold tracking-tight text-white">Beacon NGO</span>

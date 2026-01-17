@@ -10,9 +10,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
     return (
         <AuthGuard>
-            <div className="flex min-h-screen">
+            <div className="flex flex-col md:flex-row min-h-screen">
                 {!isLoginPage && <Sidebar />}
-                <main className={!isLoginPage ? "flex-1 ml-64 p-8 overflow-y-auto h-screen" : "w-full"}>
+                <main className={!isLoginPage ? "flex-1 ml-0 md:ml-64 p-4 md:p-8 overflow-y-auto h-screen" : "w-full"}>
                     {children}
                 </main>
             </div>

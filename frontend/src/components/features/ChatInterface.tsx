@@ -266,12 +266,12 @@ export function ChatInterface() {
             <div className="w-full bg-black/40 backdrop-blur-3xl border border-white/10 rounded-t-[2rem] rounded-b-xl overflow-hidden flex flex-col h-full min-h-[500px] shadow-2xl relative">
 
                 {/* Header */}
-                <div className="flex items-center gap-3 px-6 py-4 border-b border-white/5 bg-white/5 backdrop-blur-md">
+                <div className="flex items-center gap-3 px-4 md:px-6 py-4 border-b border-white/5 bg-white/5 backdrop-blur-md">
                     <span className="text-white font-semibold text-lg tracking-wide">Beacon AI</span>
                 </div>
 
                 {/* Messages Area */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-hide relative">
+                <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-8 scrollbar-hide relative">
 
                     <AnimatePresence initial={false}>
                         {messages.map((msg) => (
