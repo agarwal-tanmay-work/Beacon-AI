@@ -232,70 +232,81 @@ class ReportEngine:
                 has_placeholder = any(re.search(p, llm_response, re.IGNORECASE) for p in completion_patterns)
                 
                 if has_placeholder:
-                    # Force normalization of hallucinations to our standard placeholders for replacement
-                    llm_response = re.sub(r"BCN-\d+", "CASE_ID_PLACEHOLDER", llm_response, flags=re.IGNORECASE)
-                    
-                    case_id = await CaseService.generate_next_case_id(supabase_session)
-                    
-                    # Generate Secret Key
-                    raw_hex = secrets.token_hex(4).upper() 
-                    secret_key_display = f"{raw_hex[:4]}-{raw_hex[4:]}"
-                    secret_key_hash = pwd_context.hash(secret_key_display)
-                    
-                    # Replace placeholders (Extremely Case-insensitive & Robust)
-                    llm_response = re.sub(r"CASE_ID_PLACEHOLDER", case_id, llm_response, flags=re.IGNORECASE)
-                    llm_response = re.sub(r"SECRET_KEY_PLACEHOLDER", secret_key_display, llm_response, flags=re.IGNORECASE)
-                    
-                    # Fallback Replacement: If AI still used a weird format like "Case ID is BCN-123", overwrite it
-                    llm_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", rf"\1{case_id}", llm_response, flags=re.I)
-                    llm_response = re.sub(r"(Secret Key is\s+)([A-Z0-9-]+)", rf"\1{secret_key_display}", llm_response, flags=re.I)
-                    
-                    # Get reported_at timestamp
-                    from app.core.time_utils import get_utc_now
-                    reported_at_utc = get_utc_now()
-                    
-                    # Gather evidence files
-                    evidence_files = await ReportEngine._upload_evidence_and_get_metadata(report_id, local_session)
-                    
-                    # ---------------------------------------------------------
-                    # PHASE 1: INTAKE (FAIL-SAFE)
-                    # ---------------------------------------------------------
-                    # Create the actual Beacon record in Supabase
-                    new_case = Beacon(
-                        case_id=case_id,
-                        reported_at=reported_at_utc,
-                        secret_key=secret_key_display,
-                        secret_key_hash=secret_key_hash,
-                        status="Received",
-                        incident_summary=final_report.get("incident_summary") or final_report.get("what") or "In-progress report",
-                        evidence_files=evidence_files,
-                        analysis_status="pending"
-                    )
-                    supabase_session.add(new_case)
-                    
-                    # Store case_id in local session too for tracking
-                    from app.models.local_models import LocalSession
-                    stmt_loc = select(LocalSession).where(LocalSession.id == report_id)
-                    loc_res = await local_session.execute(stmt_loc)
-                    loc_sess = loc_res.scalar_one_or_none()
-                    if loc_sess:
-                        loc_sess.case_id = case_id
-                        loc_sess.is_submitted = True
+                    try:
+                        # Force normalization of hallucinations to our standard placeholders for replacement
+                        llm_response = re.sub(r"BCN-\d+", "CASE_ID_PLACEHOLDER", llm_response, flags=re.IGNORECASE)
+                        
+                        case_id = await CaseService.generate_next_case_id(supabase_session)
+                        
+                        # Generate Secret Key
+                        raw_hex = secrets.token_hex(4).upper() 
+                        secret_key_display = f"{raw_hex[:4]}-{raw_hex[4:]}"
+                        secret_key_hash = pwd_context.hash(secret_key_display)
+                        
+                        # Replace placeholders (Extremely Case-insensitive & Robust)
+                        llm_response = re.sub(r"CASE_ID_PLACEHOLDER", case_id, llm_response, flags=re.IGNORECASE)
+                        llm_response = re.sub(r"SECRET_KEY_PLACEHOLDER", secret_key_display, llm_response, flags=re.IGNORECASE)
+                        
+                        # Fallback Replacement: If AI still used a weird format like "Case ID is BCN-123", overwrite it
+                        llm_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", rf"\1{case_id}", llm_response, flags=re.I)
+                        llm_response = re.sub(r"(Secret Key is\s+)([A-Z0-9-]+)", rf"\1{secret_key_display}", llm_response, flags=re.I)
+                        
+                        # Get reported_at timestamp
+                        from app.core.time_utils import get_utc_now
+                        reported_at_utc = get_utc_now()
+                        
+                        # Gather evidence files
+                        evidence_files = await ReportEngine._upload_evidence_and_get_metadata(report_id, local_session)
+                        
+                        # ---------------------------------------------------------
+                        # PHASE 1: INTAKE (FAIL-SAFE)
+                        # ---------------------------------------------------------
+                        # Create the actual Beacon record in Supabase
+                        new_case = Beacon(
+                            case_id=case_id,
+                            reported_at=reported_at_utc,
+                            secret_key=secret_key_display,
+                            secret_key_hash=secret_key_hash,
+                            status="Received",
+                            incident_summary=final_report.get("incident_summary") or final_report.get("what") or "In-progress report",
+                            evidence_files=evidence_files,
+                            analysis_status="pending"
+                        )
+                        supabase_session.add(new_case)
+                        
+                        # Store case_id in local session too for tracking
+                        from app.models.local_models import LocalSession
+                        stmt_loc = select(LocalSession).where(LocalSession.id == report_id)
+                        loc_res = await local_session.execute(stmt_loc)
+                        loc_sess = loc_res.scalar_one_or_none()
+                        if loc_sess:
+                            loc_sess.case_id = case_id
+                            loc_sess.is_submitted = True
 
-                    print(f"[REPORT_ENGINE] STAGE 4: Finalizing to Supabase: {case_id}", flush=True)
-                    # COMMIT PHASE 1 (RAW DATA)
-                    await local_session.commit()
-                    await supabase_session.commit()
-                    
-                    print(f"[REPORT_ENGINE] STAGE 5: Phase 1 Intake Complete: {case_id}", flush=True)
-                    logger.info("phase1_intake_complete", case_id=case_id)
+                        print(f"[REPORT_ENGINE] STAGE 4: Finalizing to Supabase: {case_id}", flush=True)
+                        # COMMIT PHASE 1 (RAW DATA)
+                        await local_session.commit()
+                        await supabase_session.commit()
+                        
+                        print(f"[REPORT_ENGINE] STAGE 5: Phase 1 Intake Complete: {case_id}", flush=True)
+                        # logger.info("phase1_intake_complete", case_id=case_id)  # Remove logger if undefined or import it
 
-                    # ---------------------------------------------------------
-                    # PHASE 2: TRIGGER ASYNC ANALYSIS
-                    # ---------------------------------------------------------
-                    if background_tasks:
-                        from app.services.scoring_service import ScoringService
-                        background_tasks.add_task(ScoringService.run_background_scoring, report_id, case_id)
+                        # ---------------------------------------------------------
+                        # PHASE 2: TRIGGER ASYNC ANALYSIS
+                        # ---------------------------------------------------------
+                        if background_tasks:
+                            from app.services.scoring_service import ScoringService
+                            background_tasks.add_task(ScoringService.run_background_scoring, report_id, case_id)
+                    
+                    except Exception as e:
+                        print(f"[REPORT_ENGINE] CRITICAL FINALIZATION ERROR: {e}", flush=True)
+                        import traceback
+                        traceback.print_exc()
+                        # Fallback response so user isn't left hanging
+                        llm_response = (
+                            "Thank you for your report. We have received it, but encountered a temporary system error generating your tracking ID. "
+                            "Please try submitting again or contact support if this persists."
+                        )
 
                 # Always commit local session (messages + state) for every turn
                 await local_session.commit()
