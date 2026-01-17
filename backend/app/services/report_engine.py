@@ -289,7 +289,7 @@ class ReportEngine:
                         await supabase_session.commit()
                         
                         print(f"[REPORT_ENGINE] STAGE 5: Phase 1 Intake Complete: {case_id}", flush=True)
-                        # logger.info("phase1_intake_complete", case_id=case_id)  # Remove logger if undefined or import it
+                        logger.info(f"phase1_intake_complete: {case_id}")
 
                         # ---------------------------------------------------------
                         # PHASE 2: TRIGGER ASYNC ANALYSIS
