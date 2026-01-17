@@ -198,6 +198,7 @@ class ReportEngine:
                     # Use a fresh dict to ensure SQLAlchemy detects change
                     new_context_data = dict(state_tracking.context_data)
                     new_context_data["extracted"] = updated_state
+                    state_tracking.context_data = new_context_data  # CRITICAL: Assign back!
                     await local_session.flush()
 
                 # 4. Store LLM response locally
