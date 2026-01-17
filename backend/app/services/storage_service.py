@@ -63,18 +63,8 @@ class StorageService:
             }
             
         except Exception as e:
-            logger.error("storage_upload_failed_fallback_local", error=str(e), file_name=file_name)
-            # FALLBACK: Return success structure but mark as local provider
-            # The backend will serve this file via the proxy endpoint
-            return {
-                 "bucket": "local_fallback",
-                 "path": "local",
-                 "full_url": "", # Will be populated by report_engine with local proxy URL
-                 "file_name": file_name,
-                 "mime_type": mime_type,
-                 "size_bytes": len(file_bytes),
-                 "storage_provider": "local_db"
-            }
+            logger.error("storage_upload_failed", error=str(e), file_name=file_name)
+            raise e
 
     @classmethod
     def download_file(cls, bucket_name: str, path: str) -> bytes:
