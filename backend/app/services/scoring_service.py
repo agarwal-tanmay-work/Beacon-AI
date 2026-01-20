@@ -1,229 +1,142 @@
-
-from typing import Dict, Any, List, Optional
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
-from fastapi.concurrency import run_in_threadpool
-from app.services.ai_service import GroqService
-from app.services.evidence_processor import EvidenceProcessor
-from app.models.beacon import Beacon
-from app.db.session import AsyncSessionLocal
-from app.db.local_db import LocalAsyncSession
-from app.models.local_models import LocalConversation, LocalEvidence, LocalSenderType
-import structlog
 import asyncio
-import json
-import os
+import structlog
 from datetime import datetime, timezone
+from sqlalchemy.orm import Session
+from fastapi.concurrency import run_in_threadpool
+from app.db.session import SessionLocal
+from app.models.report import Report
+from app.models.evidence import Evidence
+from app.services.ai_service import GroqService
+from app.services.storage_service import StorageService
+from app.services.evidence_processor import EvidenceProcessor
 
 logger = structlog.get_logger()
 
 class ScoringService:
-    """
-    Phase 2: Asynchronous Analysis Engine (Two-Layer Architecture).
-    """
-    
     @staticmethod
     async def run_background_scoring(session_id: str, case_id: str):
         """
-        Background Entry Point.
+        Asynchronous task to:
+        1. Fetch chat history and evidence
+        2. Process evidence (OCR/Labels)
+        3. Generate AI Summary & Score with aggressive backoff/retry-after
+        4. Update Database
         """
-        print(f"[SCORING_SERVICE] Background analysis started for session={session_id}, case={case_id}", flush=True)
-        logger.info("phase2_analysis_started", session_id=session_id, case_id=case_id)
+        logger.info("background_scoring_start", case_id=case_id)
         
-        try:
-            async with AsyncSessionLocal() as supabase_session:
-                async with LocalAsyncSession() as local_session:
-                    try:
-                        # 1. Fetch Raw Data
-                        chat_history = await ScoringService._fetch_chat_history(session_id, local_session)
-                        evidence_objs = await ScoringService._fetch_evidence(session_id, local_session)
-                        
-                        if not chat_history:
-                            raise ValueError("No chat history found for analysis.")
+        async with asyncio.Lock(): # Prevent concurrent runs for same case if possible (though enqueued once)
+            db = SessionLocal()
+            try:
+                # 1. DATA COLLECTION
+                report = db.query(Report).filter(Report.case_id == case_id).first()
+                if not report:
+                    logger.error("report_not_found", case_id=case_id)
+                    return
 
-                        # 1.5 Ensure evidence is local for processing (Download if needed)
-                        import tempfile
-                        from app.services.storage_service import StorageService
-                        
-                        for ev in evidence_objs:
+                chat_history = report.conversation_logs if report.conversation_logs else []
+                evidence_objs = db.query(Evidence).filter(Evidence.case_id == case_id).all()
+
+                # 2. LAYER 1: DETERMINISTIC PROCESSING
+                evidence_metadata = await run_in_threadpool(EvidenceProcessor.process_evidence, evidence_objs)
+
+                # 3. LAYER 2: AI REASONING (WITH PERSISTENT RETRY)
+                summary = None
+                backoff_times = [10, 30, 60, 120]
+                
+                # --- SUMMARY GENERATION ---
+                for attempt in range(len(backoff_times)):
+                    result, retry_hint = await GroqService.generate_pro_summary(chat_history, timeout=30.0)
+                    if result:
+                        summary = result
+                        break
+                    
+                    wait_time = retry_hint if retry_hint else backoff_times[attempt]
+                    logger.info("bg_summary_retry", case_id=case_id, attempt=attempt+1, wait=wait_time)
+                    await asyncio.sleep(wait_time)
+
+                if not summary:
+                    report.analysis_status = "failed"
+                    report.analysis_error = "Summary generation failed (Rate Limited)"
+                    db.commit()
+                    return
+
+                # --- FORENSIC ENRICHMENT ---
+                # (OCR/Audio/Visual) - Using simple retries or skip on failure
+                for ev in evidence_metadata:
+                    if ev.file_type == "image" and ev.ocr_text_snippet and len(ev.ocr_text_snippet) > 10:
+                        analysis, _ = await GroqService.perform_forensic_ocr_analysis(ev.ocr_text_snippet, summary, timeout=20.0)
+                        if analysis: ev.forensic_analysis = analysis
+
+                    if ev.file_type == "audio" and ev.audio_transcript_snippet and len(ev.audio_transcript_snippet) > 10:
+                        audio_analysis, _ = await GroqService.perform_forensic_audio_analysis(ev.audio_transcript_snippet, summary, timeout=20.0)
+                        if audio_analysis: ev.forensic_audio_analysis = audio_analysis
+
+                    if ev.file_type == "image":
+                        try:
+                            img_content = None
                             if ev.file_path.startswith("supastorage://"):
-                                try:
-                                    file_bytes = None
-                                    # Handle Local Fallback
-                                    if "local_fallback" in ev.file_path:
-                                        logger.info("using_local_fallback_evidence", file=ev.file_name)
-                                        # Query the LocalSession table directly using session_id (which is report_id)
-                                        from app.models.local_models import LocalSession
-                                        stmt_ls = select(LocalSession).where(LocalSession.id == session_id)
-                                        res_ls = await local_session.execute(stmt_ls)
-                                        ls_rec = res_ls.scalar_one_or_none()
-                                        
-                                        if ls_rec and ls_rec.evidence_data:
-                                            for item in ls_rec.evidence_data:
-                                                if item.get("name") == ev.file_name:
-                                                     if "content_b64" in item:
-                                                         import base64
-                                                         file_bytes = base64.b64decode(item["content_b64"])
-                                                     break
-                                        
-                                        if not file_bytes:
-                                            logger.warning("local_fallback_content_missing", file=ev.file_name)
-                                            continue
-                                            
-                                    else:
-                                        # Standard Supabase Download
-                                        parts = ev.file_path.replace("supastorage://", "").split("/", 1)
-                                        if len(parts) == 2:
-                                            bucket_name, remote_path = parts
-                                            file_bytes = await run_in_threadpool(StorageService.download_file, bucket_name, remote_path)
-                                        else:
-                                            continue
+                                parts = ev.file_path.replace("supastorage://", "").split("/", 1)
+                                img_content = await run_in_threadpool(StorageService.download_file, parts[0], parts[1])
+                            else:
+                                img_content = await run_in_threadpool(lambda: open(ev.file_path, "rb").read())
 
-                                    # Save to temp file
-                                    if file_bytes:
-                                        suffix = os.path.splitext(ev.file_name)[1]
-                                        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                                            tmp.write(file_bytes)
-                                            ev.file_path = tmp.name 
-                                            logger.info("evidence_ready_for_analysis", case_id=case_id, temp_path=ev.file_path)
+                            visual_desc, _ = await GroqService.perform_forensic_visual_analysis(img_content, "image/jpeg", timeout=25.0)
+                            if visual_desc: ev.object_labels.append(f"context: {visual_desc}")
+                        except Exception: pass
 
-                                except Exception as dl_err:
-                                    logger.error("evidence_download_failed", file=ev.file_name, error=str(dl_err))
-
-                        # 2. Layer 1: Deterministic Evidence Processing
-                        evidence_metadata = await run_in_threadpool(EvidenceProcessor.process_evidence, evidence_objs)
-                                
-                        # 3. Layer 2: AI Reasoning (with aggressive exponential backoff)
-                        summary = None
-                        backoff_times = [10, 30, 60, 120]
-                        for attempt in range(len(backoff_times)):
-                            summary = await GroqService.generate_pro_summary(chat_history, timeout=30.0)
-                            if summary: break
-                            
-                            logger.info("background_scoring_summary_retry", case_id=case_id, attempt=attempt+1, delay=backoff_times[attempt])
-                            await asyncio.sleep(backoff_times[attempt])
+                # --- CREDIBILITY SCORING ---
+                metadata_context = {
+                    "evidence_count": len(evidence_objs),
+                    "timestamp": str(datetime.now(timezone.utc)),
+                    "layer1_flags": [m.model_dump() for m in evidence_metadata]
+                }
+                
+                score_result = None
+                for attempt in range(len(backoff_times)):
+                    result, retry_hint = await GroqService.calculate_credibility_score(chat_history, evidence_metadata, metadata_context, timeout=45.0)
+                    if result:
+                        score_result = result
+                        break
                         
-                        if not summary:
-                             raise ValueError("AI Summary generation failed after retries (Rate Limited or Timeout).")
+                    wait_time = retry_hint if retry_hint else backoff_times[attempt]
+                    logger.info("bg_score_retry", case_id=case_id, attempt=attempt+1, wait=wait_time)
+                    await asyncio.sleep(wait_time)
 
-                        # 3a. Forensic Enrichment (OCR, Audio, Visual)
-                        for ev in evidence_metadata:
-                            if ev.file_type == "image" and ev.ocr_text_snippet and len(ev.ocr_text_snippet) > 10:
-                                analysis = await GroqService.perform_forensic_ocr_analysis(
-                                    ocr_text=ev.ocr_text_snippet,
-                                    narrative_summary=summary,
-                                    timeout=20.0
-                                )
-                                if analysis: ev.forensic_analysis = analysis
-                            
-                            if ev.file_type == "audio" and ev.audio_transcript_snippet and len(ev.audio_transcript_snippet) > 10:
-                                if not ev.audio_transcript_snippet.startswith("["):
-                                    audio_analysis = await GroqService.perform_forensic_audio_analysis(
-                                        transcript_text=ev.audio_transcript_snippet,
-                                        narrative_summary=summary,
-                                        audio_metadata={"clarity": "medium"},
-                                        timeout=20.0
-                                    )
-                                    if audio_analysis: ev.forensic_audio_analysis = audio_analysis
-                            
-                            if ev.file_type == "image":
-                                try:
-                                    img_content = None
-                                    if ev.file_path.startswith("supastorage://"):
-                                        parts = ev.file_path.replace("supastorage://", "").split("/", 1)
-                                        img_content = await run_in_threadpool(StorageService.download_file, parts[0], parts[1])
-                                    else:
-                                        img_content = await run_in_threadpool(lambda: open(ev.file_path, "rb").read())
+                if not score_result:
+                    report.analysis_status = "failed"
+                    report.analysis_error = "Credibility scoring failed (Rate Limited)"
+                    db.commit()
+                    return
 
-                                    visual_desc = await GroqService.perform_forensic_visual_analysis(
-                                        image_bytes=img_content,
-                                        mime_type="image/png" if ev.file_name.lower().endswith(".png") else "image/jpeg",
-                                        timeout=25.0
-                                    )
-                                    if visual_desc: ev.object_labels.append(f"context: {visual_desc}")
-                                except Exception: pass
+                # 4. DATABASE UPDATE
+                report.credibility_score = max(1, min(100, score_result.credibility_score))
+                report.ai_summary = summary
+                report.analysis_status = "completed"
+                report.ai_explanation = {
+                    "rationale": score_result.rationale,
+                    "confidence": score_result.confidence_level,
+                    "limitations": score_result.limitations,
+                    "safety": score_result.final_safety_statement,
+                    "narrative_score": score_result.narrative_credibility.score if score_result.narrative_credibility else 0,
+                    "evidence_score": score_result.evidence_strength.score if score_result.evidence_strength else 0
+                }
+                
+                # Sync results back to evidence objects if needed
+                for ev_obj, ev_meta in zip(evidence_objs, evidence_metadata):
+                    ev_obj.forensic_analysis = ev_meta.forensic_analysis
+                    ev_obj.forensic_audio_analysis = ev_meta.forensic_audio_analysis
+                    ev_obj.object_labels = ev_meta.object_labels
 
-                        metadata_context = {
-                            "evidence_count": len(evidence_objs),
-                            "timestamp": str(datetime.now(timezone.utc)),
-                            "layer1_flags": [m.model_dump() for m in evidence_metadata]
-                        }
-                        
-                        score_result = None
-                        for attempt in range(len(backoff_times)):
-                            score_result = await GroqService.calculate_credibility_score(chat_history, evidence_metadata, metadata_context, timeout=45.0)
-                            if score_result: break
-                            
-                            logger.info("background_scoring_calc_retry", case_id=case_id, attempt=attempt+1, delay=backoff_times[attempt])
-                            await asyncio.sleep(backoff_times[attempt])
+                db.commit()
+                logger.info("background_scoring_success", case_id=case_id, score=report.credibility_score)
 
-                        if not score_result:
-                             raise ValueError("AI Scoring calculation failed after retries (Rate Limited or Timeout).")
-
-                        # 4. Strict Validation & Update
-                        score = max(1, min(100, score_result.credibility_score))
-                        breakdown_json = {
-                            "narrative": score_result.narrative_credibility.model_dump(),
-                            "evidence": score_result.evidence_strength.model_dump(),
-                            "behavioral": score_result.behavioral_reliability.model_dump(),
-                            "rationale": score_result.rationale,
-                            "confidence": score_result.confidence_level,
-                            "limitations": score_result.limitations,
-                            "safety_statement": score_result.final_safety_statement
-                        }
-                        
-                        stmt = (
-                            update(Beacon)
-                            .where(Beacon.case_id == case_id)
-                            .values(
-                                incident_summary=summary,
-                                credibility_score=score,
-                                credibility_breakdown=breakdown_json,
-                                score_explanation="\n".join(score_result.rationale),
-                                authority_summary=f"Confidence: {score_result.confidence_level}. {score_result.final_safety_statement}",
-                                analysis_status="completed",
-                                analysis_last_error=None
-                            )
-                        )
-                        await supabase_session.execute(stmt)
-                        await supabase_session.commit()
-                        
-                        logger.info("phase2_analysis_success", case_id=case_id, score=score)
-                        
-                    except Exception as e:
-                        logger.error("phase2_analysis_failed", case_id=case_id, error=str(e))
-                        await ScoringService._record_failure(case_id, str(e), supabase_session)
-        except Exception as outer_e:
-            print(f"[SCORING_SERVICE] CRITICAL OUTER FAILURE for case={case_id}: {outer_e}", flush=True)
-            logger.error("phase2_analysis_critical_outer_failed", case_id=case_id, error=str(outer_e))
-
-    @staticmethod
-    async def _record_failure(case_id: str, error_msg: str, session: AsyncSession):
-        try:
-            stmt = (
-                update(Beacon)
-                .where(Beacon.case_id == case_id)
-                .values(
-                    analysis_attempts=Beacon.analysis_attempts + 1,
-                    analysis_last_error=error_msg[:1000]
-                )
-            )
-            await session.execute(stmt)
-            await session.commit()
-        except Exception as e:
-            logger.error("failure_recording_failed", error=str(e))
-
-    @staticmethod
-    async def _fetch_chat_history(session_id: str, local_session: AsyncSession) -> List[Dict]:
-        stmt = select(LocalConversation).where(
-            LocalConversation.session_id == session_id
-        ).order_by(LocalConversation.created_at)
-        result = await local_session.execute(stmt)
-        objs = result.scalars().all()
-        return [{"role": "user" if m.sender == LocalSenderType.USER else "assistant", "content": m.content} for m in objs]
-
-    @staticmethod
-    async def _fetch_evidence(session_id: str, local_session: AsyncSession) -> List[LocalEvidence]:
-        stmt = select(LocalEvidence).where(LocalEvidence.session_id == session_id)
-        result = await local_session.execute(stmt)
-        return result.scalars().all()
+            except Exception as e:
+                logger.error("background_scoring_failed", case_id=case_id, error=str(e))
+                if db:
+                    report = db.query(Report).filter(Report.case_id == case_id).first()
+                    if report:
+                        report.analysis_status = "failed"
+                        report.analysis_error = str(e)
+                        db.commit()
+            finally:
+                db.close()

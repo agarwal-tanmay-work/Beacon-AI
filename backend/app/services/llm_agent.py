@@ -21,13 +21,6 @@ Keep responses natural and conversational. Be concise but do NOT sacrifice empat
 Always acknowledge the user's distress or difficulty briefly before asking the next question.
 
 ────────────────────────────────
-🔐 TRUST & ANONYMITY
-────────────────────────────────
-
-- Sharing identity is NOT required.
-- NEVER ask for name or personal contact details until the specific optional step.
-
-────────────────────────────────
 🎯 YOUR OBJECTIVE
 ────────────────────────────────
 
@@ -44,34 +37,14 @@ Collect details of a corruption incident conversationally. You must gather:
 🧭 CONVERSATION FLOW (STRICT RULES)
 ────────────────────────────────
 
-- **ONE QUESTION AT A TIME**: STRICTLY ask only ONE question per turn. Never combine questions. Wait for the user's answer before proceeding. If you need 3 details, ask for the first one, wait for answer, then ask for the second.
-- **TRUST USER INPUT**: If the user provides info, ACCEPT IT. Do not re-verify unless it is clearly unintelligible.
-- **WHAT**: If user gives a short answer (e.g. "bribed"), ASK FOR DETAILS (How? Where? Who?). Don't just accept one word.
-- **WHERE**: You MUST obtain City AND State along with the specific location. If user only gives "RTO Office", ASK "Which City and State?".
+- **ONE QUESTION AT A TIME**: STRICTLY ask only ONE question per turn. Never combine questions. Wait for the user's answer before proceeding.
 - **DATE/TIME**: 
   - **STRICTLY REQUIRED**: You MUST obtain both a DATE and a TIME.
   - If user provides Date only, ACKNOWLEDGE it and ASK for the Time.
-  - If user provides Time only, ACKNOWLEDGE it and ASK for the Date.
-  - **NEVER INFER TIME** from narrative context (e.g. "when I was pulled over"). You must get a specific time reference (e.g. "2 PM", "Afternoon").
-- **HANDLING RESISTANCE / OFF-TOPIC**:
-  - If the user refuses to answer, says "I don't know", or becomes distressed -> **STOP ASKING QUESTIONS**. Empathize first. Say: "I understand this is difficult. Take your time." Do NOT proceed until they are ready.
-  - If the user talks about unrelated topics (e.g., "The weather is bad") -> Gently pivot. Say: "I hear you. To help with your report, can we go back to..."
-  - **CRITICAL**: If the user is uncooperative, DO NOT force the protocol. Calm them down first.
-- **GUARDRAILS**: If input is off-topic, politely pivot back to the report.
 - **OPTIONAL CONTACT**: Ask EXACTLY: "Would you like to provide any contact details so we can follow up with you? This is **COMPLETELY OPTIONAL**. You may say 'no' or 'skip' to remain anonymous." (Ensure 'COMPLETELY OPTIONAL' is Bold and Uppercase).
-- **ANYTHING ELSE**:
-  - After user provides contact info OR says "no/skip", you MUST ask: "Is there anything else you would like to add or clarify before I submit your report?"
 - **FINALIZATION**: 
   - ONLY if user says "No" to "Anything else?", your NEXT response MUST be the final Case ID message.
   - Do NOT summarize facts first.
-
-────────────────────────────────
-🚫 RESTRICTIONS (CRITICAL)
-────────────────────────────────
-
-1. **NEVER output a "Confirmed Facts" summary** to the user. The [CONFIRMED FACTS] block is for YOUR eyes only.
-2. **Do NOT re-ask** for details already present in [CONFIRMED FACTS].
-3. **Do NOT add pleasantries** after the final message.
 
 ────────────────────────────────
 🧾 FINALIZATION MESSAGE
@@ -103,8 +76,7 @@ Format:
 class LLMAgent:
     """Groq-powered LLM Agent."""
     
-    GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-    # Downgraded to 8B for faster response and higher rate limits
+    # Centralized in GroqService now, keeping for backward compatibility if needed locally
     GROQ_MODEL = "llama-3.1-8b-instant"
     
     @staticmethod
@@ -118,7 +90,6 @@ class LLMAgent:
         # 1. CLEAN HISTORY & STATE
         state = current_state.copy() if current_state else {}
         summary_parts = []
-        # Define fields to track
         track_fields = ["what", "where", "when", "who", "evidence", "contact_info", "other_details"]
         
         for k in track_fields:
@@ -132,87 +103,62 @@ class LLMAgent:
         full_system_prompt = f"{SYSTEM_PROMPT}\n\n### [CONFIRMED FACTS] ###\n{summary_text}\n##########################"
         
         messages = [{"role": "system", "content": full_system_prompt}]
-        # Provide enough context for extraction logic
         recent_history = conversation_history[-15:] if len(conversation_history) > 15 else conversation_history
         for msg in recent_history:
              messages.append({"role": msg["role"].lower(), "content": msg["content"]})
             
-        # 3. PREPARE PAYLOAD
-        payload = {
-            "model": LLMAgent.GROQ_MODEL,
-            "messages": messages,
-            "temperature": 0.1, 
-            "max_tokens": 1024
-        }
-        
-        headers = {
-            "Authorization": f"Bearer {api_key.strip()}",
-            "Content-Type": "application/json"
-        }
-        
-        # 4. API CALL (FAIL-FAST STRATEGY)
-        # We try ONCE. If rate limited, we fail immediately to prevent frontend freezing.
+        # 3. API CALL (UNIFIED STRATEGY)
+        from app.services.ai_service import GroqService
         try:
-            async with httpx.AsyncClient() as client:
-                # Reduced timeout to 10s as requested
-                response = await client.post(LLMAgent.GROQ_API_URL, json=payload, headers=headers, timeout=10.0)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    text_response = data["choices"][0]["message"]["content"]
-                    
-                    # Extract fresh JSON
-                    fresh_extracted = LLMAgent._extract_report(text_response) or {}
-                    
-                    # Merge with State (Trust LLM's latest extraction if it's not empty)
-                    final_report_to_save = state.copy()
-                    for k in track_fields:
-                        v = fresh_extracted.get(k)
-                        val = str(v).strip() if v is not None else ""
-                        if val and val.lower() not in ["", "none", "unknown", "null", "..."]:
-                            # Update if different or currently empty
-                            old_val = str(state.get(k) or "").lower()
-                            if val.lower() != old_val:
-                                final_report_to_save[k] = val
-                    
-                    clean_response = LLMAgent._clean_response(text_response)
-                    
-                    # Placeholder Consistency Fix (Case-insensitive catch-all)
-                    clean_response = re.sub(r"case_id_placeholder", "CASE_ID_PLACEHOLDER", clean_response, flags=re.I)
-                    clean_response = re.sub(r"secret_key_placeholder", "SECRET_KEY_PLACEHOLDER", clean_response, flags=re.I)
-                    
-                    # Fix for hallucinations (BCN-XXXX or similar)
-                    if "case id" in clean_response.lower() and "secret key" in clean_response.lower():
-                        if "CASE_ID_PLACEHOLDER" not in clean_response:
-                            clean_response = re.sub(r"BCN-\d+", "CASE_ID_PLACEHOLDER", clean_response)
-                            if "CASE_ID_PLACEHOLDER" not in clean_response:
-                                clean_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", r"\1CASE_ID_PLACEHOLDER", clean_response, flags=re.I)
-                        
-                        if "SECRET_KEY_PLACEHOLDER" not in clean_response:
-                            clean_response = re.sub(r"(Secret Key is\s+)([A-Z0-9-]+)", r"\1SECRET_KEY_PLACEHOLDER", clean_response, flags=re.I)
-
-                    return clean_response, final_report_to_save
-
-                elif response.status_code == 429:
-                    print(f"[LLM_AGENT] Rate limit hit (429). Returning fallback immediately.", flush=True)
-                    return "I'm currently experiencing very high traffic interactions. Please try sending your message again in a few seconds.", state
-                
-                else:
-                    print(f"[LLM_AGENT] API Error {response.status_code}: {response.text}", flush=True)
-                    # Fall through to mock
-
-        except httpx.TimeoutException:
-            print("[LLM_AGENT] Groq API timed out (10s). Returning fallback.", flush=True)
-            return "I'm having a little trouble connecting to the server. Could you please say that again?", state
+            # GroqService.safe_chat handles timeouts and 429 logging internally
+            # It returns (content, retry_after)
+            text_response, retry_after = await GroqService.safe_chat(messages, model=LLMAgent.GROQ_MODEL, timeout=10.0)
             
+            if text_response:
+                # Extract fresh JSON
+                fresh_extracted = LLMAgent._extract_report(text_response) or {}
+                
+                # Merge with State
+                final_report_to_save = state.copy()
+                for k in track_fields:
+                    v = fresh_extracted.get(k)
+                    val = str(v).strip() if v is not None else ""
+                    if val and val.lower() not in ["", "none", "unknown", "null", "..."]:
+                        old_val = str(state.get(k) or "").lower()
+                        if val.lower() != old_val:
+                            final_report_to_save[k] = val
+                
+                clean_response = LLMAgent._clean_response(text_response)
+                
+                # Placeholder Consistency Fix
+                clean_response = re.sub(r"case_id_placeholder", "CASE_ID_PLACEHOLDER", clean_response, flags=re.I)
+                clean_response = re.sub(r"secret_key_placeholder", "SECRET_KEY_PLACEHOLDER", clean_response, flags=re.I)
+                
+                # Fix for hallucinations
+                if "case id" in clean_response.lower() and "secret key" in clean_response.lower():
+                    if "CASE_ID_PLACEHOLDER" not in clean_response:
+                        clean_response = re.sub(r"BCN-\d+", "CASE_ID_PLACEHOLDER", clean_response)
+                        if "CASE_ID_PLACEHOLDER" not in clean_response:
+                            clean_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", r"\1CASE_ID_PLACEHOLDER", clean_response, flags=re.I)
+                    
+                    if "SECRET_KEY_PLACEHOLDER" not in clean_response:
+                        clean_response = re.sub(r"(Secret Key is\s+)([A-Z0-9-]+)", r"\1SECRET_KEY_PLACEHOLDER", clean_response, flags=re.I)
+
+                return clean_response, final_report_to_save
+
+            elif retry_after:
+                print(f"[LLM_AGENT] Rate limit hit. Retry-After: {retry_after}s", flush=True)
+                return f"I'm currently experiencing high traffic. Please try sending your message again in a few seconds.", state
+
+            else:
+                print(f"[LLM_AGENT] Groq service returned no response and no retry hint.", flush=True)
+                return await LLMAgent._mock_chat(conversation_history, current_state)
+
         except Exception as e:
             print(f"[LLM_AGENT] Unexpected error during chat: {e}", flush=True)
             import traceback
             traceback.print_exc()
-
-        # Final Fallback
-        print(f"[LLM_AGENT] Falling back to generic response", flush=True)
-        return await LLMAgent._mock_chat(conversation_history, current_state)
+            return await LLMAgent._mock_chat(conversation_history, current_state)
 
     @staticmethod
     async def _mock_chat(conversation_history: list, current_state: dict = None) -> Tuple[str, Optional[dict]]:
@@ -232,10 +178,7 @@ class LLMAgent:
         text = re.sub(r'###\s*\[CONFIRMED FACTS\]\s*###[\s\S]*?##########################', '', text, flags=re.DOTALL)
         text = re.sub(r'(Confirmed Facts|Summary of Information):.*', '', text, flags=re.DOTALL | re.IGNORECASE)
 
-        # 4. AGGRESSIVE JSON STRIPPING (At the end of message)
-        # Matches a closing JSON block at the very end of the string, even if no markdown tags
-        # Logic: Look for last occurrence of } and check if it looks like a JSON object started recently
-        # We can simply remove any trailing block that looks like { "key": ... } using regex
+        # 4. AGGRESSIVE JSON STRIPPING
         text = re.sub(r'\s*\{[\s\S]*?"what"[\s\S]*?\}\s*$', '', text, flags=re.DOTALL|re.IGNORECASE) 
 
         # 5. Final whitespace cleanup
@@ -261,30 +204,12 @@ class LLMAgent:
 
     @staticmethod
     async def rewrite_update(raw_text: str) -> str:
-        UPDATE_SYSTEM_PROMPT = "Rewrite this NGO update to be neutral and concise for public display."
-        api_key = settings.GROQ_API_KEY
-        if not api_key: return raw_text
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    LLMAgent.GROQ_API_URL,
-                    json={
-                        "model": "llama-3.1-8b-instant",
-                        "messages": [{"role": "system", "content": UPDATE_SYSTEM_PROMPT}, {"role": "user", "content": raw_text}],
-                        "temperature": 0.1, "max_tokens": 150
-                    },
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    timeout=10.0
-                )
-                if response.status_code == 200:
-                    return response.json()["choices"][0]["message"]["content"].strip()
-        except: pass
-        return raw_text
-
-    @staticmethod
-    async def analyze_image_fast(file_path: str, known_mime_type: str = None) -> str:
-        return "Image attachment detected. Verification in progress."
-
-    @staticmethod
-    async def analyze_audio_fast(file_path: str) -> str:
-        return "Audio attachment detected. Transcription in progress."
+        from app.services.ai_service import GroqService
+        result, _ = await GroqService.safe_chat(
+            messages=[
+                {"role": "system", "content": "Rewrite this NGO update to be neutral and concise for public display."},
+                {"role": "user", "content": raw_text}
+            ],
+            timeout=10.0
+        )
+        return result.strip() if result else raw_text
