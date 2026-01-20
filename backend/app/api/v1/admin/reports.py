@@ -373,7 +373,8 @@ async def trigger_reanalysis(
     
     # Need to find report_id in LocalSession
     from sqlalchemy import select
-    from app.models.local_models import LocalSession, LocalAsyncSession
+    from app.models.local_models import LocalSession
+    from app.db.local_db import LocalAsyncSession
     
     async with LocalAsyncSession() as local_db:
         stmt = select(LocalSession).where(LocalSession.case_id == case.case_id)
