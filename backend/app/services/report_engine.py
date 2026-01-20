@@ -229,16 +229,19 @@ class ReportEngine:
                         secret_key_hash = pwd_context.hash(secret_key_display)
                         
                         # Replace placeholders (Extremely Case-insensitive & Robust)
-                        temp_llm_response = re.sub(r"CASE_ID_PLACEHOLDER[\w-]*", case_id, llm_response, flags=re.IGNORECASE)
-                        temp_llm_response = re.sub(r"SECRET_KEY_PLACEHOLDER[\w-]*", secret_key_display, temp_llm_response, flags=re.IGNORECASE)
+                        # This handles CASE_ID_PLACEHOLDER, CASE_ID_1234, etc.
+                        temp_llm_response = re.sub(r"CASE_ID_(PLACEHOLDER|\d+)", case_id, llm_response, flags=re.IGNORECASE)
+                        temp_llm_response = re.sub(r"SECRET_KEY_(PLACEHOLDER|\d+)", secret_key_display, temp_llm_response, flags=re.IGNORECASE)
                         
-                        # Fallback Replacement: If AI still used a weird format
-                        temp_llm_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", rf"\1{case_id}", temp_llm_response, flags=re.I)
-                        temp_llm_response = re.sub(r"(Secret Key is\s*|Your - )([A-Z0-9-]+)", rf"Secret Key is {secret_key_display}", temp_llm_response, flags=re.I)
+                        # Fallback Replacement: If AI still used a weird format or hallucinated a generic pattern
+                        temp_llm_response = re.sub(r"(Case ID is:?\s*)([A-Z0-9_-]+)", rf"\g<1>{case_id}", temp_llm_response, flags=re.I)
+                        temp_llm_response = re.sub(r"(Secret Key is:?\s*)([A-Z0-9_-]+)", rf"\g<1>{secret_key_display}", temp_llm_response, flags=re.I)
 
-                        # FINAL SAFETY NET: If Secret Key is NOT in the text, append it.
-                        if secret_key_display not in temp_llm_response and "SECRET_KEY_PLACEHOLDER" not in temp_llm_response:
-                                temp_llm_response = re.sub(r"Your - \s*$", "", temp_llm_response).strip()
+                        # FINAL SAFETY NET: If Secret Key is NOT in the text AND placeholders were missed
+                        if secret_key_display not in temp_llm_response:
+                                temp_llm_response = temp_llm_response.rstrip()
+                                if not temp_llm_response.endswith("."):
+                                    temp_llm_response += "."
                                 temp_llm_response += f"\n\nYour Secret Key is {secret_key_display}. Please save this."
                         
                         # Get reported_at timestamp

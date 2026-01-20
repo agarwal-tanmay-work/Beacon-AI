@@ -59,7 +59,7 @@ When finished (user says "no" to anything else), say EXACTLY this:
 Your Case ID is: CASE_ID_PLACEHOLDER
 Your Secret Key is: SECRET_KEY_PLACEHOLDER
 
-**IMPORTANT**: Please save both of these safely to track your case status. We will investigate and take appropriate action. You've done the right thing by speaking up."
+**IMPORTANT**: Please save both of these safely to track your case status. We will investigate and take appropriate action. You've done the right thing by speaking up." (Strictly use ONLY these placeholders: CASE_ID_PLACEHOLDER and SECRET_KEY_PLACEHOLDER. DO NOT provide examples like CASE_ID_1234 or SECRET_KEY_5678).
 
 ────────────────────────────────
 🧩 STRUCTURED DATA EXTRACTION (INTERNAL)
@@ -166,6 +166,42 @@ class LLMAgent:
             import traceback
             traceback.print_exc()
             return await LLMAgent._mock_chat(conversation_history, current_state)
+
+    @staticmethod
+    async def analyze_image_fast(file_path: str) -> str:
+        """Fast visual context extraction."""
+        print(f"[LLM_AGENT] analyze_image_fast: {file_path}", flush=True)
+        try:
+            from app.services.storage_service import StorageService
+            from app.services.ai_service import GroqService
+
+            content = None
+            if file_path.startswith("supastorage://"):
+                parts = file_path.replace("supastorage://", "").split("/", 1)
+                content = StorageService.download_file(parts[0], parts[1])
+            else:
+                if os.path.exists(file_path):
+                    with open(file_path, "rb") as f:
+                        content = f.read()
+
+            if content:
+                desc, _ = await GroqService.perform_forensic_visual_analysis(content, "image/jpeg", timeout=10.0)
+                return desc or "An image was uploaded but I couldn't process it clearly."
+            return "An image file was detected."
+        except Exception as e:
+            print(f"[LLM_AGENT] analyze_image_fast error: {e}", flush=True)
+            return "An image was uploaded."
+
+    @staticmethod
+    async def analyze_audio_fast(file_path: str) -> str:
+        """Fast audio/video context placeholder (Whisper is too slow for real-time chat usually)."""
+        # We just acknowledge the file type for now to keep chat snappy
+        ext = file_path.split(".")[-1].lower()
+        if ext in ["mp3", "wav", "m4a", "aac"]:
+            return "An audio recording was uploaded. I'll include it in the report analysis."
+        if ext in ["mp4", "mov", "avi"]:
+            return "A video file was uploaded. I'll include it in the report analysis."
+        return "A media file was uploaded."
 
     @staticmethod
     async def _mock_chat(conversation_history: list, current_state: dict = None) -> Tuple[str, Optional[dict]]:

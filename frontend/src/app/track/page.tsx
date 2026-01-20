@@ -4,6 +4,8 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Shield, Calendar, AlignLeft, RefreshCcw, AlertCircle, ArrowRight, Loader2, Activity } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { SparklesCore } from "@/components/ui/sparkles";
 import { FireSphere } from "@/components/ui/fire-sphere";
 import { api } from "@/lib/api";
@@ -384,12 +386,12 @@ export default function TrackPage() {
                                                         msg.sender_role === 'user' ? "ml-auto items-end" : "mr-auto items-start"
                                                     )}>
                                                         <div className={cn(
-                                                            "p-6 rounded-2xl text-lg font-light leading-relaxed",
+                                                            "p-6 rounded-2xl text-lg font-light leading-relaxed prose prose-invert prose-blue max-w-none",
                                                             msg.sender_role === 'user'
                                                                 ? "bg-blue-600/10 border border-blue-500/20 text-blue-50 rounded-tr-sm"
                                                                 : "bg-white/5 border border-white/10 text-white/90 rounded-tl-sm"
                                                         )}>
-                                                            {msg.content && <p>{msg.content}</p>}
+                                                            {msg.content && <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>}
                                                             {msg.attachments.length > 0 && (
                                                                 <div className="mt-4 space-y-2">
                                                                     {msg.attachments.map((att, i) => {

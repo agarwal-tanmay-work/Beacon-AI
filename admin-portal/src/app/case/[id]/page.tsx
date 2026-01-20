@@ -5,8 +5,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { ArrowLeft, Send, Clock, AlertTriangle, FileText, ChevronDown, Shield, Paperclip } from "lucide-react";
-import { clsx } from "clsx";
-import { formatToIST } from "@/lib/utils";
+import { cn, formatToIST } from "@/lib/utils";
+import ReactMarkdown from "react-markdown";
 
 interface EvidenceFile {
     file_name: string;
@@ -240,7 +240,7 @@ export default function CaseDetailPage() {
                                         key={s}
                                         disabled={statusLoading}
                                         onClick={() => handleStatusChange(s)}
-                                        className={clsx(
+                                        className={cn(
                                             "text-left px-3 py-2 rounded hover:bg-white/10 text-sm flex items-center justify-between",
                                             caseData.status === s ? "text-primary font-bold" : "text-gray-300",
                                             statusLoading && "opacity-50 cursor-not-allowed"
@@ -267,7 +267,7 @@ export default function CaseDetailPage() {
                 <div className="p-4 bg-card border border-border rounded-xl flex flex-col justify-between">
                     <div>
                         <span className="text-muted-foreground text-xs uppercase tracking-wider">Credibility Score</span>
-                        <div className={clsx(
+                        <div className={cn(
                             "text-2xl font-bold mt-1",
                             caseData.credibility_score === null ? "text-muted-foreground" :
                                 caseData.credibility_score > 70 ? "text-green-500" : "text-yellow-500"
@@ -321,24 +321,25 @@ export default function CaseDetailPage() {
                         </div>
                     </div>
 
-                    {/* AI Credibility Breakdown */}
-                    {caseData.ai_explanation && (
-                        <div className="bg-card border border-border rounded-xl p-6">
-                            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                                <Shield className="w-5 h-5 text-purple-500" /> AI Credibility Breakdown
-                            </h2>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                                <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-                                    <div className="text-xs text-muted-foreground uppercase font-bold">Narrative Consistency</div>
-                                    <div className="text-lg font-bold text-primary">{caseData.ai_explanation.narrative_score}/40</div>
-                                </div>
-                                <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-                                    <div className="text-xs text-muted-foreground uppercase font-bold">Evidence Strength</div>
-                                    <div className="text-lg font-bold text-blue-500">{caseData.ai_explanation.evidence_score}/40</div>
-                                </div>
-                            </div>
+                    {/* Credibility Score Explanation - Merged & Detailed */}
+                    <div className="bg-card border border-border rounded-xl p-6">
+                        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                            <Shield className="w-5 h-5 text-purple-500" /> Credibility Score Explanation
+                        </h2>
 
-                            <div className="space-y-4">
+                        {caseData.ai_explanation && (
+                            <div className="space-y-6 mb-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                                        <div className="text-xs text-muted-foreground uppercase font-bold">Narrative Consistency</div>
+                                        <div className="text-lg font-bold text-primary">{caseData.ai_explanation.narrative_score}/40</div>
+                                    </div>
+                                    <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                                        <div className="text-xs text-muted-foreground uppercase font-bold">Evidence Strength</div>
+                                        <div className="text-lg font-bold text-blue-500">{caseData.ai_explanation.evidence_score}/40</div>
+                                    </div>
+                                </div>
+
                                 <div>
                                     <div className="text-sm font-bold text-white mb-2">Analysis Rationale</div>
                                     <ul className="list-disc pl-5 space-y-1">
@@ -361,14 +362,8 @@ export default function CaseDetailPage() {
                                     </div>
                                 )}
                             </div>
-                        </div>
-                    )}
+                        )}
 
-                    {/* Credibility Explanation - Simplified based on requirements */}
-                    <div className="bg-card border border-border rounded-xl p-6">
-                        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                            <Shield className="w-5 h-5 text-purple-500" /> Credibility Score Explanation
-                        </h2>
                         <div className="text-sm text-gray-300 bg-white/5 p-4 rounded-lg border border-white/10">
                             {caseData.app_score_explanation || "No explanation provided."}
                         </div>
@@ -389,18 +384,18 @@ export default function CaseDetailPage() {
                                 messages.map((msg) => (
                                     <div
                                         key={msg.id}
-                                        className={clsx(
+                                        className={cn(
                                             "flex flex-col max-w-[85%]",
                                             msg.sender_role === 'admin' ? "ml-auto items-end" : "mr-auto items-start"
                                         )}
                                     >
-                                        <div className={clsx(
-                                            "px-4 py-2 rounded-2xl text-sm",
+                                        <div className={cn(
+                                            "px-4 py-2 rounded-2xl text-sm prose prose-invert prose-sm max-w-none",
                                             msg.sender_role === 'admin'
                                                 ? "bg-primary/20 border border-primary/30 text-white rounded-tr-none"
                                                 : "bg-white/5 border border-white/10 text-gray-300 rounded-tl-none"
                                         )}>
-                                            {msg.content}
+                                            <ReactMarkdown>{msg.content}</ReactMarkdown>
                                             {msg.attachments && msg.attachments.length > 0 && (
                                                 <div className="mt-2 space-y-1">
                                                     {msg.attachments.map((att, idx) => {
@@ -449,7 +444,7 @@ export default function CaseDetailPage() {
                                     />
                                     <button
                                         onClick={() => document.getElementById('ngo-chat-file')?.click()}
-                                        className={clsx(
+                                        className={cn(
                                             "p-3 rounded-lg border border-border hover:bg-white/5 transition-colors",
                                             selectedFile ? "text-primary border-primary/50" : "text-muted-foreground"
                                         )}

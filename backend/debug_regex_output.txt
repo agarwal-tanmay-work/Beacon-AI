@@ -1,0 +1,23 @@
+
+--- Testing: Original problematic message ---
+Output: "Thank you for your courage in reporting this.\nYour Case ID is: BCN-1234\nYour Secret Key is: 8EF5-F40B\nIMPORTANT: Please save both of these safely to track your case status. We will investigate and take appropriate action. You've done the right thing by speaking up."
+Checking for case_id: 'BCN-1234'
+Case ID found: True
+Secret Key found: True
+Occurrences of secret key: 1
+PASSED
+
+--- Testing: Standard placeholders ---
+Output: 'Your Case ID is: BCN-1234\nYour Secret Key is: 8EF5-F40B'
+Checking for case_id: 'BCN-1234'
+Case ID found: True
+Secret Key found: True
+Occurrences of secret key: 1
+PASSED
+
+--- Testing: No placeholders (Safety net) ---
+Output: 'Thank you for reporting. Your case is being investigated.\n\nYour Secret Key is 8EF5-F40B. Please save this.'
+Checking for case_id: 'BCN-1234'
+Case ID found: False
+Secret Key found: True
+FAILED: Case ID BCN-1234 not found
