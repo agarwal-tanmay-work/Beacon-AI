@@ -2,7 +2,8 @@ from contextlib import asynccontextmanager
 from app.core.network_utils import force_ipv4_resolution
 
 # Apply network patch immediately
-force_ipv4_resolution()
+# DISABLED: Force IPv4 was blocking IPv6-only Supabase resolution in this environment.
+# force_ipv4_resolution()
 
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware

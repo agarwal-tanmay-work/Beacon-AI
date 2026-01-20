@@ -32,20 +32,33 @@ try:
         db_url = urlunparse(parsed)
 
     hostname = parsed.hostname
-    if hostname and not hostname.replace('.', '').isdigit(): # Don't resolve if already IP
+    if hostname and not hostname.replace('.', '').isdigit() and ":" not in hostname: # Don't resolve if already IP
         # Use dnspython to query DNS directly, bypassing flaky system/libc resolver (Errno -5)
         resolver = dns.resolver.Resolver()
         # Use Google DNS as fallback if system DNS server is unreachable/broken
         resolver.nameservers = ['8.8.8.8', '8.8.4.4'] 
-        answers = resolver.resolve(hostname, 'A')
-        ipv4_addr = answers[0].to_text()
         
-        print(f"[NETWORK] Resolved {hostname} to {ipv4_addr} (via dnspython)", flush=True)
-        # Replace hostname with IP in the URL
-        new_netloc = parsed.netloc.replace(hostname, ipv4_addr)
-        db_url = urlunparse(parsed._replace(netloc=new_netloc))
+        try:
+            print(f"[NETWORK] Resolving {hostname} (IPv4/A)...", flush=True)
+            answers = resolver.resolve(hostname, 'A')
+            ipv4_addr = answers[0].to_text()
+            print(f"[NETWORK] Resolved {hostname} to {ipv4_addr} (via dnspython)", flush=True)
+            new_netloc = parsed.netloc.replace(hostname, ipv4_addr)
+            db_url = urlunparse(parsed._replace(netloc=new_netloc))
+        except Exception as e_a:
+            print(f"[NETWORK] IPv4 resolution failed for {hostname}: {e_a}", flush=True)
+            try:
+                print(f"[NETWORK] Resolving {hostname} (IPv6/AAAA)...", flush=True)
+                answers = resolver.resolve(hostname, 'AAAA')
+                ipv6_addr = answers[0].to_text()
+                print(f"[NETWORK] Resolved {hostname} to [{ipv6_addr}] (via dnspython)", flush=True)
+                new_netloc = parsed.netloc.replace(hostname, f"[{ipv6_addr}]")
+                db_url = urlunparse(parsed._replace(netloc=new_netloc))
+            except Exception as e_aaaa:
+                print(f"[NETWORK] IPv6 resolution also failed for {hostname}: {e_aaaa}", flush=True)
+                print(f"[NETWORK] Falling back to system resolver for {hostname}", flush=True)
 except Exception as e:
-    print(f"[NETWORK] Failed to resolve hostname: {e}", flush=True)
+    print(f"[NETWORK] DNS helper logic errored: {e}", flush=True)
 
 # Configure connection args
 connect_args = {}

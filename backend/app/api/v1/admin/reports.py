@@ -48,6 +48,7 @@ class AdminReportSchema(BaseModel):
     ai_summary: Optional[str] = None
     ai_explanation: Optional[dict] = None
     analysis_status: Optional[str] = "pending"
+    admin_summary: Optional[str] = None
     app_score_explanation: Optional[str] = None
     evidence_files: Optional[List[dict]] = []
     updates: Optional[List[CaseUpdateSchema]] = []
@@ -114,6 +115,7 @@ async def get_reports(
             ai_explanation=getattr(b, "ai_explanation", None),
             analysis_status=getattr(b, "analysis_status", "pending"),
             app_score_explanation=b.score_explanation,
+            admin_summary=getattr(b, "admin_summary", None),
             evidence_files=evidence
         ))
 
@@ -181,6 +183,7 @@ async def get_report_detail(
         ai_explanation=getattr(case, "ai_explanation", None),
         analysis_status=getattr(case, "analysis_status", "pending"),
         app_score_explanation=case.score_explanation,
+        admin_summary=getattr(case, "admin_summary", None),
         evidence_files=evidence,
         updates=updates_data
     )

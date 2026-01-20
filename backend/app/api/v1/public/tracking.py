@@ -233,6 +233,7 @@ async def upload_track_file(
 
     # 2. Save File
     try:
+        content = await file.read()
         # Cloud-Only Storage (Supabase)
         try:
             upload_res = await StorageService.upload_file(content, file.filename, file.content_type or "application/octet-stream")
@@ -243,7 +244,7 @@ async def upload_track_file(
             
         return SecureUploadResponse(
             file_name=file.filename,
-            file_path=file_path,
+            file_path=StorageService.get_public_url(file_path),
             mime_type=file.content_type or "application/octet-stream"
         )
     except Exception as e:
