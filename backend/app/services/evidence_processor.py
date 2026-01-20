@@ -9,7 +9,7 @@ import subprocess
 import shutil
 from typing import List, Optional, Set
 from app.schemas.ai import EvidenceMetadata, EvidenceType
-from app.models.local_models import LocalEvidence
+from app.models.report import Evidence
 
 logger = structlog.get_logger()
 
@@ -23,7 +23,7 @@ class EvidenceProcessor:
     MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB Limit per file
 
     @classmethod
-    def process_evidence(cls, evidence_list: List[LocalEvidence]) -> List[EvidenceMetadata]:
+    def process_evidence(cls, evidence_list: List[Evidence]) -> List[EvidenceMetadata]:
         processed = []
         seen_hashes: Set[str] = set()
         
@@ -36,7 +36,7 @@ class EvidenceProcessor:
         return processed
 
     @classmethod
-    def _analyze_single_file(cls, evidence: LocalEvidence, seen_hashes: Set[str]) -> EvidenceMetadata:
+    def _analyze_single_file(cls, evidence: Evidence, seen_hashes: Set[str]) -> EvidenceMetadata:
         file_path = evidence.file_path
         
         # 0. Basic Validation & File Loading

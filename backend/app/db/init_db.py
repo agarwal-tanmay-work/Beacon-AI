@@ -16,8 +16,8 @@ logger = structlog.get_logger()
 async def run_init_db():
     logger.info("db_init_start")
     
-    # 1. Initialize Local SQLite (always needed for staging)
-    await init_local_db()
+    # 1. Initialize Local SQLite (SKIPPED - MIGRATED TO SUPABASE)
+    # await init_local_db()
     
     # 2. Initialize Supabase PostgreSQL Tables (if connection string present)
     if settings.DATABASE_URL and "sqlite" not in settings.DATABASE_URL:
@@ -28,6 +28,7 @@ async def run_init_db():
         from app.models.beacon import Beacon
         from app.models.beacon_update import BeaconUpdate
         from app.models.beacon_message import BeaconMessage
+        from app.models.report import Report, ReportConversation, ReportStateTracking, Evidence
         
         try:
             # Add timeout to fail fast if connection hangs (e.g. firewall/network issues)

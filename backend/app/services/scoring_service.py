@@ -6,10 +6,9 @@ from sqlalchemy.orm import Session
 from fastapi.concurrency import run_in_threadpool
 
 from app.db.session import AsyncSessionLocal
-from app.db.local_db import LocalAsyncSession
 
 from app.models.beacon import Beacon
-from app.models.local_models import LocalConversation, LocalEvidence
+from app.models.report import ReportConversation, Evidence, SenderType
 from app.services.ai_service import GroqService
 from app.services.storage_service import StorageService
 from app.services.evidence_processor import EvidenceProcessor
@@ -31,8 +30,8 @@ class ScoringService:
         logger.info("background_scoring_start", case_id=case_id)
         
         async with asyncio.Lock():
-            # Open both sessions
-            async with AsyncSessionLocal() as remote_db, LocalAsyncSession() as local_db:
+            # Open Supabase session
+            async with AsyncSessionLocal() as remote_db:
                 try:
                     # 1. Fetch case from Supabase
                     stmt = select(Beacon).where(Beacon.case_id == case_id)
@@ -43,23 +42,23 @@ class ScoringService:
                         logger.error("beacon_not_found", case_id=case_id)
                         return
 
-                    # 2. Fetch Chat History from SQLite
-                    hist_stmt = select(LocalConversation).where(
-                        LocalConversation.session_id == session_id
-                    ).order_by(LocalConversation.created_at.asc())
-                    hist_res = await local_db.execute(hist_stmt)
+                    # 2. Fetch Chat History from Supabase (instead of local)
+                    # We need the report_id (which is session_id in current context)
+                    from uuid import UUID
+                    history_stmt = select(ReportConversation).where(
+                        ReportConversation.report_id == UUID(session_id)
+                    ).order_by(ReportConversation.created_at.asc())
+                    hist_res = await remote_db.execute(history_stmt)
                     history_objs = hist_res.scalars().all()
                     
                     chat_history = []
                     for msg in history_objs:
-                        # Convert to format Groq expects: list of {"role": "...", "content": "..."}
-                        sender_str = str(msg.sender).split('.')[-1] if '.' in str(msg.sender) else str(msg.sender)
-                        role = "user" if sender_str == "USER" else "assistant"
-                        chat_history.append({"role": role, "content": msg.content})
+                        role = "user" if msg.sender == SenderType.USER else "assistant"
+                        chat_history.append({"role": role, "content": msg.content_redacted})
 
-                    # 3. Fetch Evidence from SQLite
-                    ev_stmt = select(LocalEvidence).where(LocalEvidence.session_id == session_id)
-                    ev_res = await local_db.execute(ev_stmt)
+                    # 3. Fetch Evidence from Supabase
+                    ev_stmt = select(Evidence).where(Evidence.report_id == UUID(session_id))
+                    ev_res = await remote_db.execute(ev_stmt)
                     evidence_objs = ev_res.scalars().all()
 
                     # 4. Process Evidence (OCR/Labels)

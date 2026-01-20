@@ -23,14 +23,14 @@ import asyncio
 import re
 import secrets
 
-from app.db.local_db import LocalAsyncSession
-from app.models.local_models import (
-    LocalSession, 
-    LocalConversation, 
-    LocalSenderType,
-    LocalStateTracking
+from app.db.session import AsyncSessionLocal
+from app.models.report import (
+    Report,
+    ReportConversation,
+    SenderType,
+    ReportStateTracking,
+    Evidence
 )
-from app.models.local_models import LocalEvidence
 from app.models.beacon import Beacon
 from app.schemas.report import MessageResponse
 from app.services.llm_agent import LLMAgent
@@ -79,47 +79,39 @@ class ReportEngine:
         5. Handle completion - INSERT to beacon if final
         """
         try:
-            async with LocalAsyncSession() as local_session:
-                print(f"[REPORT_ENGINE] STAGE 1: Store user message: {report_id}", flush=True)
-                user_msg = LocalConversation(
-                    session_id=report_id,
-                    sender=LocalSenderType.USER,
-                    content=user_message
-                )
-                local_session.add(user_msg)
-                await local_session.flush()
-                
-                # 1.5. CHECK FOR & PROCESS NEW EVIDENCE (FAST VISION MODE - Stage A)
-                # Replaced heavy EvidenceProcessor with lightweight Grok Vision call
-                from app.models.local_models import LocalEvidence
-                
-                # 1.5. CHECK FOR & PROCESS NEW EVIDENCE (FAST VISION/AUDIO MODE)
-                # Replaced heavy EvidenceProcessor with lightweight Grok Vision call
-                from app.models.local_models import LocalEvidence
-                
-                ev_stmt = select(LocalEvidence).where(LocalEvidence.session_id == report_id).order_by(LocalEvidence.uploaded_at)
-                ev_result = await local_session.execute(ev_stmt)
-                evidence_items = ev_result.scalars().all()
-                evidence_items = list(evidence_items) # Ensure list
+            # Stage 1: Store user message in Supabase
+            print(f"[REPORT_ENGINE] STAGE 1: Store user message: {report_id}", flush=True)
+            user_msg = ReportConversation(
+                report_id=UUIDType(report_id),
+                sender=SenderType.USER,
+                content_redacted=user_message
+            )
+            supabase_session.add(user_msg)
+            await supabase_session.flush()
+            
+            # 1.5. CHECK FOR & PROCESS NEW EVIDENCE
+            ev_stmt = select(Evidence).where(Evidence.report_id == UUIDType(report_id)).order_by(Evidence.uploaded_at)
+            ev_result = await supabase_session.execute(ev_stmt)
+            evidence_items = list(ev_result.scalars().all())
 
-                # 2. Build conversation history from local DB
-                stmt = select(LocalConversation).where(
-                    LocalConversation.session_id == report_id
-                ).order_by(LocalConversation.created_at)
-                result = await local_session.execute(stmt)
-                history_objs = result.scalars().all()
-                
-                # Fetch persistent state context
-                state_stmt = select(LocalStateTracking).where(LocalStateTracking.session_id == report_id)
-                state_res = await local_session.execute(state_stmt)
+            # 2. Build conversation history from Supabase
+            stmt = select(ReportConversation).where(
+                ReportConversation.report_id == UUIDType(report_id)
+            ).order_by(ReportConversation.created_at)
+            result = await supabase_session.execute(stmt)
+            history_objs = result.scalars().all()
+            
+            # Fetch persistent state context from Supabase
+            state_stmt = select(ReportStateTracking).where(ReportStateTracking.report_id == UUIDType(report_id))
+            state_res = await supabase_session.execute(state_stmt)
+            state_tracking = state_res.scalar_one_or_none()
+            
+            if not state_tracking:
+                # Auto-initialize if missing
+                await ReportEngine.initialize_report(report_id, "tk_auto_gen")
+                state_stmt = select(ReportStateTracking).where(ReportStateTracking.report_id == UUIDType(report_id))
+                state_res = await supabase_session.execute(state_stmt)
                 state_tracking = state_res.scalar_one_or_none()
-                
-                if not state_tracking:
-                    # Auto-initialize if missing (Safety Net)
-                    await ReportEngine.initialize_report(report_id, "tk_auto_gen")
-                    state_stmt = select(LocalStateTracking).where(LocalStateTracking.session_id == report_id)
-                    state_res = await local_session.execute(state_stmt)
-                    state_tracking = state_res.scalar_one_or_none()
 
                 current_state = {}
                 if state_tracking and state_tracking.context_data:
@@ -161,57 +153,47 @@ class ReportEngine:
                     new_context_data = dict(state_tracking.context_data or {})
                     new_context_data["extracted"] = current_state
                     state_tracking.context_data = new_context_data
-                    await local_session.flush()
+                    await supabase_session.flush()
 
                 # Convert to LLM format
                 conversation_history = []
                 for msg in history_objs:
-                    sender_str = str(msg.sender).split('.')[-1] if '.' in str(msg.sender) else str(msg.sender)
-                    role = "user" if sender_str == "USER" else "assistant"
+                    role = "user" if msg.sender == SenderType.USER else "assistant"
                     
                     conversation_history.append({
                         "role": role,
-                        "content": msg.content
+                        "content": msg.content_redacted
                     })
                 
-                # INJECT EVIDENCE CONTEXT (System Injection)
-                # ONLY inject if we just processed NEW evidence
+                # ... (inject evidence context omitted for brevity, logic remains same)
                 if evidence_context_str:
                     conversation_history.append({
                          "role": "system",
                          "content": f"[NEW EVIDENCE UPLOADED]\nAnalysis of files just uploaded: {evidence_context_str}"
                     })
 
-                # 3. Forward to LLM (LLM is sole conversational authority)
-                # Pass current_state to LLM so it knows what it ALREADY confirmed
-                print(f"[REPORT_ENGINE] STAGE 2: LLM Request starting: {report_id}", flush=True)
+                # ... (LLM call remains same)
                 llm_response, new_extracted_data = await LLMAgent.chat(conversation_history, current_state)
-                print(f"[REPORT_ENGINE] STAGE 3: LLM Response received: {len(llm_response or '')} chars", flush=True)
                 
-                # Update persistent state if new info discovered
                 if new_extracted_data and state_tracking:
-                    # Merge logic: New data overwrites/adds to old data
                     updated_state = current_state.copy()
                     for k, v in new_extracted_data.items():
-                        if v and v != "...": # Only merge meaningful data
+                        if v and v != "...":
                             updated_state[k] = v
                     
-                    # Store back to context_data
-                    # Use a fresh dict to ensure SQLAlchemy detects change
                     new_context_data = dict(state_tracking.context_data)
                     new_context_data["extracted"] = updated_state
-                    state_tracking.context_data = new_context_data  # CRITICAL: Assign back!
-                    await local_session.flush()
+                    state_tracking.context_data = new_context_data
+                    await supabase_session.flush()
 
-                # 4. Store LLM response locally
-                sys_msg = LocalConversation(
-                    session_id=report_id,
-                    sender=LocalSenderType.SYSTEM,
-                    content=llm_response
+                # 4. Store LLM response in Supabase
+                sys_msg = ReportConversation(
+                    report_id=UUIDType(report_id),
+                    sender=SenderType.SYSTEM,
+                    content_redacted=llm_response
                 )
-                local_session.add(sys_msg)
+                supabase_session.add(sys_msg)
                 
-                # Use merged state for final report if submittted
                 final_report = new_extracted_data if new_extracted_data else current_state
 
                 
@@ -265,13 +247,12 @@ class ReportEngine:
                         from app.core.time_utils import get_utc_now
                         reported_at_utc = get_utc_now()
                         
-                        # Gather evidence files
-                        evidence_files = await ReportEngine._upload_evidence_and_get_metadata(report_id, local_session)
+                        # Gather evidence files metadata from Supabase
+                        evidence_files = await ReportEngine._get_evidence_metadata(report_id, supabase_session)
                         
                         # ---------------------------------------------------------
                         # PHASE 1: INTAKE (FAIL-SAFE)
                         # ---------------------------------------------------------
-                        # Create the actual Beacon record in Supabase
                         new_case = Beacon(
                             case_id=case_id,
                             reported_at=reported_at_utc,
@@ -284,18 +265,15 @@ class ReportEngine:
                         )
                         supabase_session.add(new_case)
                         
-                        # Store case_id in local session too for tracking
-                        from app.models.local_models import LocalSession
-                        stmt_loc = select(LocalSession).where(LocalSession.id == report_id)
-                        loc_res = await local_session.execute(stmt_loc)
-                        loc_sess = loc_res.scalar_one_or_none()
-                        if loc_sess:
-                            loc_sess.case_id = case_id
-                            loc_sess.is_submitted = True
+                        # Update Report record in Supabase
+                        stmt_rep = select(Report).where(Report.id == UUIDType(report_id))
+                        rep_res = await supabase_session.execute(stmt_rep)
+                        report_rec = rep_res.scalar_one_or_none()
+                        if report_rec:
+                            report_rec.case_id = case_id
+                            report_rec.status = "NEW"
 
                         print(f"[REPORT_ENGINE] STAGE 4: Finalizing to Supabase: {case_id}", flush=True)
-                        # COMMIT PHASE 1 (RAW DATA)
-                        await local_session.commit()
                         await supabase_session.commit()
                         
                         print(f"[REPORT_ENGINE] STAGE 5: Phase 1 Intake Complete: {case_id}", flush=True)
@@ -324,142 +302,108 @@ class ReportEngine:
                             "Please try submitting again or contact support if this persists."
                         )
 
-                # Always commit local session (messages + state) for every turn
-                await local_session.commit()
+                # Always commit all turns
+                await supabase_session.commit()
                 
                 return MessageResponse(
-                    report_id=UUIDType(report_id),  # Convert string to UUID
+                    report_id=UUIDType(report_id),
                     sender=SenderType.SYSTEM,
                     content=llm_response,
                     timestamp=datetime.now(timezone.utc),
                     next_step=next_step,
-                    case_id=case_id,  # Include case_id in response when submitted
-                    secret_key=secret_key_display if case_id else None # Return ONLY ONCE
+                    case_id=case_id,
+                    secret_key=secret_key_display if case_id else None
                 )
         
         except Exception as e:
             print(f"[REPORT_ENGINE] ERROR in process_message: {e}", flush=True)
-            try:
-                await local_session.rollback()
-            except: pass
-            try:
-                await supabase_session.rollback()
-            except: pass
+            await supabase_session.rollback()
             raise
 
     @staticmethod
-    async def _upload_evidence_and_get_metadata(session_id: str, local_session: AsyncSession) -> list:
+    async def _get_evidence_metadata(session_id: str, supabase_session: AsyncSession) -> list:
         """
-        Uploads evidence files to Supabase Storage in parallel and returns metadata list.
+        Retrieves evidence metadata from Supabase for Beacon enrichment.
         """
-        from app.services.storage_service import StorageService
-        import asyncio
-        
-        stmt = select(LocalEvidence).where(LocalEvidence.session_id == session_id)
-        result = await local_session.execute(stmt)
+        stmt = select(Evidence).where(Evidence.report_id == UUIDType(session_id))
+        result = await supabase_session.execute(stmt)
         evidence_objs = result.scalars().all()
         
-        if not evidence_objs:
-            return []
-
-        async def upload_single(ev):
-            try:
-                # FIX: If file is already uploaded (e.g. resumption), skip upload
-                if ev.file_path.startswith("supastorage://"):
-                    # Construct metadata from existing info
-                    # Format: supastorage://bucket/year/month/uuid_filename
-                    # Real bucket is 'evidence'
-                    path_suffix = ev.file_path.replace("supastorage://evidence/", "")
-                    
-                    # We need to reconstruction full_url if possible, or leave blank if not needed strictly here
-                    # StorageService normally returns: bucket, path, full_url, file_name, mime_type, size_bytes
-                    
-                    # NOTE: We can't easily get the public URL without re-querying or storing it.
-                    # But for 'evidence_metadata' usage, we might just need the path.
-                    
-                    # Let's try to reconstruct Public URL pattern: {SUPABASE_URL}/storage/v1/object/public/evidence/{path}
-                    from app.core.config import settings
-                    public_url = f"{settings.SUPABASE_URL}/storage/v1/object/public/evidence/{path_suffix}"
-                    
-                    return {
-                        "bucket": "evidence",
-                        "path": path_suffix,
-                        "full_url": public_url,
-                        "file_name": ev.file_name,
-                        "mime_type": ev.mime_type,
-                        "size_bytes": 0, # Unknown, but maybe not critical for flow
-                        "storage_provider": "supabase"
-                    }
-
-                with open(ev.file_path, "rb") as f:
-                    file_bytes = f.read()
-                return await StorageService.upload_file(file_bytes, ev.file_name, ev.mime_type)
-            except Exception as e:
-                print(f"[REPORT_ENGINE] Error uploading evidence file {ev.file_path}: {e}")
-                return {"file_name": ev.file_name, "error": str(e)}
-
-        # Run all uploads in parallel
-        results = await asyncio.gather(*(upload_single(ev) for ev in evidence_objs))
-        return list(results)
+        results = []
+        for ev in evidence_objs:
+            # Reconstruct URL if it's supastorage
+            from app.core.config import settings
+            path_suffix = ev.file_path.replace("supastorage://evidence/", "")
+            public_url = f"{settings.SUPABASE_URL}/storage/v1/object/public/evidence/{path_suffix}" if "supastorage://" in ev.file_path else ev.file_path
+            
+            results.append({
+                "bucket": "evidence",
+                "path": path_suffix,
+                "full_url": public_url,
+                "file_name": ev.file_name,
+                "mime_type": ev.mime_type,
+                "size_bytes": ev.size_bytes,
+                "storage_provider": "supabase"
+            })
+        return results
 
     @staticmethod
     async def initialize_report(report_id: str, access_token: str):
         """
-        Initialize a new report session in LOCAL SQLite.
+        Initialize a new report session in SUPABASE.
         """
         import hashlib
         token_hash = hashlib.sha256(access_token.encode()).hexdigest()
 
-        async with LocalAsyncSession() as local_session:
+        async with AsyncSessionLocal() as supabase_session:
             # Check if session already exists
-            stmt = select(LocalSession).where(LocalSession.id == report_id)
-            result = await local_session.execute(stmt)
+            stmt = select(Report).where(Report.id == UUIDType(report_id))
+            result = await supabase_session.execute(stmt)
             existing = result.scalar_one_or_none()
             
             if existing:
-                print(f"[REPORT_ENGINE] Session {report_id} already exists", flush=True)
+                print(f"[REPORT_ENGINE] Session {report_id} already exists in Supabase", flush=True)
                 return
             
-            # Create LocalSession
-            new_session = LocalSession(
-                id=report_id,
+            # Create Report (Supabase)
+            new_report = Report(
+                id=UUIDType(report_id),
                 access_token_hash=token_hash,
-                is_active=True,
-                is_submitted=False
+                status="NEW"
             )
-            local_session.add(new_session)
+            supabase_session.add(new_report)
 
-            # Initialize state tracking locally
-            state_tracking = LocalStateTracking(
-                session_id=report_id,
+            # Initialize state tracking in Supabase
+            state_tracking = ReportStateTracking(
+                report_id=UUIDType(report_id),
                 current_step="ACTIVE",
                 context_data={
                     "initialized_at": datetime.now(timezone.utc).isoformat(),
                     "extracted": {}
                 }
             )
-            local_session.add(state_tracking)
-            await local_session.commit()
+            supabase_session.add(state_tracking)
+            await supabase_session.commit()
             
-            print(f"[REPORT_ENGINE] Initialized local session: {report_id}", flush=True)
+            print(f"[REPORT_ENGINE] Initialized Supabase session: {report_id}", flush=True)
 
     @staticmethod
     async def get_session_status(session_id: str) -> dict:
         """
-        Get session status from local database.
+        Get session status from Supabase.
         """
-        async with LocalAsyncSession() as local_session:
-            stmt = select(LocalSession).where(LocalSession.id == session_id)
-            result = await local_session.execute(stmt)
-            session = result.scalar_one_or_none()
+        async with AsyncSessionLocal() as supabase_session:
+            stmt = select(Report).where(Report.id == UUIDType(session_id))
+            result = await supabase_session.execute(stmt)
+            report = result.scalar_one_or_none()
             
-            if not session:
-                return {"error": "Session not found"}
+            if not report:
+                return {"error": "Report session not found"}
             
             return {
-                "session_id": session.id,
-                "is_active": session.is_active,
-                "is_submitted": session.is_submitted,
-                "case_id": session.case_id,
-                "created_at": session.created_at.isoformat() if session.created_at else None
+                "session_id": str(report.id),
+                "is_active": report.status != "CLOSED",
+                "is_submitted": report.case_id is not None,
+                "case_id": report.case_id,
+                "created_at": report.created_at.isoformat() if report.created_at else None
             }

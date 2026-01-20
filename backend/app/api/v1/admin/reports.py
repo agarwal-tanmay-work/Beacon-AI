@@ -367,27 +367,34 @@ async def trigger_reanalysis(
     case.analysis_attempts = 0
     await db.commit()
     
-    # We need to pass conversation history
-    # The scoring service usually fetches it itself or receives it.
-    # In run_background_scoring, it's fetched from LocalConversation.
-    
-    # Need to find report_id in LocalSession
+    # Need to find report_id in Supabase Report record (staging metadata)
     from sqlalchemy import select
-    from app.models.local_models import LocalSession
-    from app.db.local_db import LocalAsyncSession
+    from app.models.report import Report
     
-    async with LocalAsyncSession() as local_db:
-        stmt = select(LocalSession).where(LocalSession.case_id == case.case_id)
-        res = await local_db.execute(stmt)
-        lsess = res.scalar_one_or_none()
-        
-        if not lsess:
-             raise HTTPException(status_code=404, detail="Original chat session not found for re-analysis")
-        
-        # Trigger background task
-        # We simulate the BackgroundTasks object if not provided in dependency (but here we are in an endpoint)
-        from fastapi import BackgroundTasks
-        bt = BackgroundTasks()
-        bt.add_task(ScoringService.run_background_scoring, lsess.id, db)
-        # Note: In FastAPI, return the background tasks object for it to execute
-        return {"message": "Analysis triggered manually", "case_id": case.case_id}
+    # report_id is the primary key of the Report table in Supabase
+    report_id = None
+    stmt_rep = select(Report).where(Report.case_id == case.case_id)
+    res_rep = await db.execute(stmt_rep)
+    report_rec = res_rep.scalar_one_or_none()
+    
+    if report_rec:
+        report_id = str(report_rec.id)
+    else:
+        # Fallback: search for Evidence to find report_id
+        from app.models.report import Evidence
+        stmt_ev = select(Evidence).where(Evidence.case_id == case.case_id)
+        res_ev = await db.execute(stmt_ev)
+        ev_rec = res_ev.scalar_one_or_none()
+        if ev_rec:
+            report_id = str(ev_rec.report_id)
+            
+    if not report_id:
+        raise HTTPException(status_code=404, detail="Original reporting session data not found for this case. Evidence or history may be missing.")
+    
+    # Trigger background task
+    from fastapi import BackgroundTasks
+    bt = BackgroundTasks()
+    # Signature: run_background_scoring(session_id: str, case_id: str)
+    bt.add_task(ScoringService.run_background_scoring, report_id, case.case_id)
+    
+    return {"message": "Analysis triggered manually", "case_id": case.case_id}
