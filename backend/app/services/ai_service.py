@@ -25,7 +25,7 @@ class GroqService:
     VISION_MODEL = "llama-3.2-11b-vision"
 
     @classmethod
-    async def _call_groq(cls, messages: List[Dict[str, Any]], schema_class: Optional[Type[T]] = None, model: str = TEXT_MODEL) -> Optional[T | str]:
+    async def _call_groq(cls, messages: List[Dict[str, Any]], schema_class: Optional[Type[T]] = None, model: str = TEXT_MODEL, timeout: Optional[float] = None) -> Optional[T | str]:
         if not settings.GROQ_API_KEY:
             logger.warning("groq_api_key_missing")
             return None
@@ -50,17 +50,20 @@ class GroqService:
         if schema_class:
             payload["response_format"] = {"type": "json_object"}
 
+        effective_timeout = timeout if timeout is not None else cls.TIMEOUT
+
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(
                     cls.BASE_URL, 
                     headers=headers, 
                     json=payload, 
-                    timeout=cls.TIMEOUT
+                    timeout=effective_timeout
                 )
                 
                 if response.status_code == 429:
-                    logger.error("groq_rate_limit_hit", status=429)
+                    retry_after = response.headers.get("Retry-After")
+                    logger.error("groq_rate_limit_hit", status=429, retry_after=retry_after)
                     return None
                     
                 if response.status_code != 200:
@@ -118,7 +121,7 @@ class GroqService:
         return {"analysis": result_text if result_text else "Visual analysis unavailable (Rate Limited)"}
 
     @classmethod
-    async def perform_forensic_ocr_analysis(cls, ocr_text: str, narrative_summary: str) -> Optional[Any]: # Returns ForensicOCRAnalysis schema
+    async def perform_forensic_ocr_analysis(cls, ocr_text: str, narrative_summary: str, timeout: Optional[float] = None) -> Optional[Any]: # Returns ForensicOCRAnalysis schema
         from app.schemas.ai import ForensicOCRAnalysis
         
         system_prompt = """You are a forensic OCR text analysis module within Beacon Credibility Engine.
@@ -182,10 +185,10 @@ It does not verify authenticity, truth, or legality of the content.
             }
         ]
         
-        return await cls._call_groq(messages, ForensicOCRAnalysis)
+        return await cls._call_groq(messages, ForensicOCRAnalysis, timeout=timeout)
 
     @classmethod
-    async def perform_forensic_audio_analysis(cls, transcript_text: str, narrative_summary: str, audio_metadata: dict = None) -> Optional[Any]:
+    async def perform_forensic_audio_analysis(cls, transcript_text: str, narrative_summary: str, audio_metadata: dict = None, timeout: Optional[float] = None) -> Optional[Any]:
         from app.schemas.ai import ForensicAudioAnalysis
         
         metadata_str = ""
@@ -261,10 +264,10 @@ It does not verify speaker identity, authenticity, intent, legality, or factual 
             }
         ]
         
-        return await cls._call_groq(messages, ForensicAudioAnalysis)
+        return await cls._call_groq(messages, ForensicAudioAnalysis, timeout=timeout)
 
     @classmethod
-    async def perform_forensic_visual_analysis(cls, image_bytes: bytes, mime_type: str) -> Optional[str]:
+    async def perform_forensic_visual_analysis(cls, image_bytes: bytes, mime_type: str, timeout: Optional[float] = None) -> Optional[str]:
         """
         Qualitative scene description for Layer 2.
         NEUTRAL and OBJECTIVE.
@@ -288,11 +291,11 @@ Keep it neutral. Example: 'Uniformed officer standing on a road next to a vehicl
             ]
         }]
         
-        result = await cls._call_groq(messages, model=cls.VISION_MODEL)
+        result = await cls._call_groq(messages, model=cls.VISION_MODEL, timeout=timeout)
         return str(result).strip() if result else None
 
     @classmethod
-    async def generate_pro_summary(cls, chat_history: List[Dict[str, str]]) -> str:
+    async def generate_pro_summary(cls, chat_history: List[Dict[str, str]], timeout: Optional[float] = None) -> str:
         conversation_text = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in chat_history])
         messages = [{
             "role": "user",
@@ -305,7 +308,7 @@ Keep it neutral. Example: 'Uniformed officer standing on a road next to a vehicl
                 f"Log:\n{conversation_text}"
             )
         }]
-        result = await cls._call_groq(messages)
+        result = await cls._call_groq(messages, timeout=timeout)
         if not result:
             return "No summary generated."
             
@@ -323,7 +326,8 @@ Keep it neutral. Example: 'Uniformed officer standing on a road next to a vehicl
         cls, 
         chat_history: List[Dict[str, str]], 
         evidence_metadata: List[EvidenceMetadata], 
-        metadata: Dict[str, Any]
+        metadata: Dict[str, Any],
+        timeout: Optional[float] = None
     ) -> Optional[ScoringResult]:
         
         conversation_text = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in chat_history])
@@ -388,4 +392,4 @@ TOTAL SCORE = Sum(Subscores). Max 100.
             }
         ]
         
-        return await cls._call_groq(messages, ScoringResult)
+        return await cls._call_groq(messages, ScoringResult, timeout=timeout)

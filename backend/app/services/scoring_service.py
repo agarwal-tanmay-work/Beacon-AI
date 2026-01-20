@@ -93,25 +93,26 @@ class ScoringService:
                         # 2. Layer 1: Deterministic Evidence Processing
                         evidence_metadata = await run_in_threadpool(EvidenceProcessor.process_evidence, evidence_objs)
                                 
-                        # 3. Layer 2: AI Reasoning (with exponential backoff)
+                        # 3. Layer 2: AI Reasoning (with aggressive exponential backoff)
                         summary = None
-                        backoff_times = [5, 15, 30]
+                        backoff_times = [10, 30, 60, 120]
                         for attempt in range(len(backoff_times)):
-                            summary = await GroqService.generate_pro_summary(chat_history)
+                            summary = await GroqService.generate_pro_summary(chat_history, timeout=30.0)
                             if summary: break
                             
                             logger.info("background_scoring_summary_retry", case_id=case_id, attempt=attempt+1, delay=backoff_times[attempt])
                             await asyncio.sleep(backoff_times[attempt])
                         
                         if not summary:
-                             raise ValueError("AI Summary returned None after retries (Rate Limited).")
+                             raise ValueError("AI Summary generation failed after retries (Rate Limited or Timeout).")
 
                         # 3a. Forensic Enrichment (OCR, Audio, Visual)
                         for ev in evidence_metadata:
                             if ev.file_type == "image" and ev.ocr_text_snippet and len(ev.ocr_text_snippet) > 10:
                                 analysis = await GroqService.perform_forensic_ocr_analysis(
                                     ocr_text=ev.ocr_text_snippet,
-                                    narrative_summary=summary
+                                    narrative_summary=summary,
+                                    timeout=20.0
                                 )
                                 if analysis: ev.forensic_analysis = analysis
                             
@@ -120,7 +121,8 @@ class ScoringService:
                                     audio_analysis = await GroqService.perform_forensic_audio_analysis(
                                         transcript_text=ev.audio_transcript_snippet,
                                         narrative_summary=summary,
-                                        audio_metadata={"clarity": "medium"}
+                                        audio_metadata={"clarity": "medium"},
+                                        timeout=20.0
                                     )
                                     if audio_analysis: ev.forensic_audio_analysis = audio_analysis
                             
@@ -135,7 +137,8 @@ class ScoringService:
 
                                     visual_desc = await GroqService.perform_forensic_visual_analysis(
                                         image_bytes=img_content,
-                                        mime_type="image/png" if ev.file_name.lower().endswith(".png") else "image/jpeg"
+                                        mime_type="image/png" if ev.file_name.lower().endswith(".png") else "image/jpeg",
+                                        timeout=25.0
                                     )
                                     if visual_desc: ev.object_labels.append(f"context: {visual_desc}")
                                 except Exception: pass
@@ -148,14 +151,14 @@ class ScoringService:
                         
                         score_result = None
                         for attempt in range(len(backoff_times)):
-                            score_result = await GroqService.calculate_credibility_score(chat_history, evidence_metadata, metadata_context)
+                            score_result = await GroqService.calculate_credibility_score(chat_history, evidence_metadata, metadata_context, timeout=45.0)
                             if score_result: break
                             
                             logger.info("background_scoring_calc_retry", case_id=case_id, attempt=attempt+1, delay=backoff_times[attempt])
                             await asyncio.sleep(backoff_times[attempt])
 
                         if not score_result:
-                             raise ValueError("AI Scoring returned None after retries (Rate Limited).")
+                             raise ValueError("AI Scoring calculation failed after retries (Rate Limited or Timeout).")
 
                         # 4. Strict Validation & Update
                         score = max(1, min(100, score_result.credibility_score))
