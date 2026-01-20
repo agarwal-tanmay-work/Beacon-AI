@@ -46,6 +46,12 @@ class Report(Base):
     
     # New Credibility Analysis Fields
     incident_summary = Column(Text, nullable=True)
+    ai_summary = Column(Text, nullable=True) # Unified with ScoringService
+    analysis_status = Column(String(20), default="pending", nullable=False) # 'pending', 'analyzing', 'completed', 'failed'
+    analysis_error = Column(Text, nullable=True)
+    ai_explanation = Column(JSON, nullable=True)
+    conversation_logs = Column(JSON, nullable=True) # JSON snapshot for scoring
+    
     evidence_analysis = Column(JSON, nullable=True)
     tone_analysis = Column(JSON, nullable=True)
     consistency_score = Column(Integer, nullable=True)
@@ -89,6 +95,7 @@ class Evidence(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     report_id = Column(UUID(as_uuid=True), ForeignKey("reports.id"), nullable=False)
+    case_id = Column(String(15), nullable=True, index=True) # Linked case_id
     
     file_path = Column(String(512), nullable=False)
     file_name = Column(String(255), nullable=False)
@@ -96,6 +103,11 @@ class Evidence(Base):
     size_bytes = Column(Integer, nullable=False)
     file_hash = Column(String(128), nullable=False)
     
+    # Forensic results
+    forensic_analysis = Column(JSON, nullable=True)
+    forensic_audio_analysis = Column(JSON, nullable=True)
+    object_labels = Column(JSON, default=list)
+
     is_scanned = Column(Boolean, default=False, nullable=False)
     is_pii_cleansed = Column(Boolean, default=True, nullable=False)
     

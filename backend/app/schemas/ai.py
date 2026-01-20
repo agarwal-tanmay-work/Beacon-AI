@@ -94,7 +94,7 @@ class ScoringResult(BaseModel):
     rationale: List[str] = Field(..., description="Objective, bullet-point explanation")
     confidence_level: str = Field(..., description="Low / Medium / High")
     
-    limitations: str = Field(..., description="What could not be verified")
+    limitations: List[str] = Field(..., description="What could not be verified")
     final_safety_statement: str = Field(..., description="Mandatory disclaimer")
 
 class AIAnalysisResult(BaseModel):
