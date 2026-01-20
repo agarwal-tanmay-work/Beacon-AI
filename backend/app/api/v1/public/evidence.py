@@ -3,16 +3,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import os
 import uuid
 import hashlib
-from app.db.local_db import LocalAsyncSession
-from app.models.local_models import LocalEvidence
 from app.core.config import settings
 from app.services.storage_service import StorageService
 from datetime import datetime, timezone
 
 router = APIRouter()
 
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# Cloud-Only Storage (Supabase)
+# No local uploads directory used in production.
 
 @router.post("/upload")
 async def upload_evidence(
@@ -31,31 +29,15 @@ async def upload_evidence(
         content = await file.read()
         file_hash = hashlib.sha256(content).hexdigest()
         
-        # Save to local uploads folder
-        file_ext = os.path.splitext(file.filename)[1]
-        unique_filename = f"{uuid.uuid4()}{file_ext}"
-        file_path = ""
-        
-        # PRODUCTION: Upload to Supabase Storage if configured
-        if settings.SUPABASE_URL and settings.SUPABASE_KEY and settings.ENVIRONMENT != "local_dev":
-            try:
-                # Use standardized StorageService
-                upload_res = await StorageService.upload_file(content, file.filename, file.content_type or "application/octet-stream")
-                file_path = f"supastorage://{upload_res['bucket']}/{upload_res['path']}"
-                print(f"[UPLOAD] Uploaded to Supabase: {file_path}")
-            except Exception as sup_err:
-                print(f"[UPLOAD] Supabase Upload Failed: {sup_err}. Falling back to local.")
-                # Fallback to local
-                local_path = os.path.join(UPLOAD_DIR, unique_filename)
-                with open(local_path, "wb") as f:
-                    f.write(content)
-                file_path = os.path.abspath(local_path)
-        else:
-            # DEV: Local Storage
-            local_path = os.path.join(UPLOAD_DIR, unique_filename)
-            with open(local_path, "wb") as f:
-                f.write(content)
-            file_path = os.path.abspath(local_path)
+        # PRODUCTION: Upload to Supabase Storage
+        try:
+            # Use standardized StorageService
+            upload_res = await StorageService.upload_file(content, file.filename, file.content_type or "application/octet-stream")
+            file_path = f"supastorage://{upload_res['bucket']}/{upload_res['path']}"
+            print(f"[UPLOAD] Uploaded to Supabase: {file_path}")
+        except Exception as sup_err:
+            print(f"[UPLOAD] Supabase Upload Failed: {sup_err}")
+            raise HTTPException(status_code=503, detail="Cloud storage unavailable. Please try again later.")
             
         # Track in Supabase
         from app.db.session import AsyncSessionLocal

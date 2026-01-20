@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 from enum import Enum
 
@@ -19,6 +19,15 @@ class ForensicOCRAnalysis(BaseModel):
     objective_notes: List[str]
     limitations: Optional[List[str]] = Field(default_factory=list)
 
+    @field_validator("objective_notes", "limitations", mode="before")
+    @classmethod
+    def ensure_list(cls, v):
+        if isinstance(v, str):
+            return [v] if v.strip() else []
+        if v is None:
+            return []
+        return v
+
 # --- Forensic Audio/Video Analysis Schema ---
 
 class AudioKeyElements(BaseModel):
@@ -35,6 +44,15 @@ class ForensicAudioAnalysis(BaseModel):
     narrative_alignment: str = Field(..., description="none | partial | strong")
     objective_notes: List[str]
     limitations: Optional[List[str]] = Field(default_factory=list)
+
+    @field_validator("objective_notes", "limitations", mode="before")
+    @classmethod
+    def ensure_list(cls, v):
+        if isinstance(v, str):
+            return [v] if v.strip() else []
+        if v is None:
+            return []
+        return v
 
 # --- Layer 1: Deterministic Evidence Flags ---
 
@@ -96,6 +114,15 @@ class ScoringResult(BaseModel):
     
     limitations: Optional[List[str]] = Field(default_factory=list, description="What could not be verified")
     final_safety_statement: str = Field(..., description="Mandatory disclaimer")
+
+    @field_validator("rationale", "limitations", mode="before")
+    @classmethod
+    def ensure_list(cls, v):
+        if isinstance(v, str):
+            return [v] if v.strip() else []
+        if v is None:
+            return []
+        return v
 
 class AIAnalysisResult(BaseModel):
     summary: str

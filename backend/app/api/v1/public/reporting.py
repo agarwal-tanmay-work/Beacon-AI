@@ -17,7 +17,7 @@ async def create_report(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Initialize a new anonymous report session in the local staging database.
+    Initialize a new anonymous report session in Supabase.
     """
     # Generate a unique session ID
     report_id = str(uuid.uuid4())

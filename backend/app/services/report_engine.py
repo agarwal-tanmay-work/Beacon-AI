@@ -1,15 +1,14 @@
 """
-Report Engine - Backend Observer Pattern with Two-Tier Database.
+Report Engine - Backend Observer Pattern with Cloud-Only Database (Supabase).
 
 Data Flow:
-1. Chat sessions stored in LOCAL SQLite (transient)
-2. Final case data stored in SUPABASE beacon table (permanent)
+1. Chat sessions, history, and state stored in SUPABASE staging tables (Report, ReportConversation, ReportStateTracking)
+2. Finalized case data stored in SUPABASE beacon table (permanent)
 
 Key Rules:
 - ONE row per case in beacon table (INSERT once, UPDATE after)
-- No per-question rows in Supabase
-- incident_summary combines ALL user answers
-- credibility_score generated once and stored permanently
+- reported_at, case_id, incident_summary stored permanently
+- Evidence metadata synced from Evidence table to Beacon on finalization
 """
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,10 +34,8 @@ from app.models.beacon import Beacon
 from app.schemas.report import MessageResponse
 from app.services.llm_agent import LLMAgent
 from app.services.case_service import CaseService
-from app.models.report import SenderType
 from uuid import UUID as UUIDType
 from passlib.context import CryptContext
-import secrets
 import logging
 from fastapi import BackgroundTasks
 
@@ -50,17 +47,17 @@ class ReportEngine:
     """
     Backend Observer Pattern with Two-Tier Database.
     
-    LOCAL SQLite stores:
-    - Active chat sessions
-    - Conversation messages
-    - State tracking
-    - Temporary evidence
+    SUPABASE staging tables store:
+    - Active chat sessions (Report)
+    - Conversation messages (ReportConversation)
+    - State tracking (ReportStateTracking)
+    - Evidence metadata (Evidence)
     
     SUPABASE beacon table stores:
     - One row per case (INSERT once)
     - reported_at, case_id, incident_summary
     - credibility_score, score_explanation
-    - evidence_files (Base64 encoded)
+    - evidence_files (JSON metadata)
     """
     
     @staticmethod
@@ -72,10 +69,10 @@ class ReportEngine:
     ) -> MessageResponse:
         """
         Process a user message:
-        1. Store user message in LOCAL SQLite
-        2. Build conversation history from LOCAL
-        3. Forward to LLM (LLM leads)
-        4. Store LLM response in LOCAL
+        1. Store user message in Supabase
+        2. Build conversation history from Supabase
+        3. Forward to LLM
+        4. Store LLM response in Supabase
         5. Handle completion - INSERT to beacon if final
         """
         try:
