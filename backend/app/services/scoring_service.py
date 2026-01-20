@@ -148,7 +148,7 @@ class ScoringService:
                     beacon.analysis_status = "completed"
                     
                     # Update score_explanation (Text) for compatibility with existing dashboard
-                    beacon.score_explanation = f"Rationale: {', '.join(score_result.rationale)}\n\nConfidence: {score_result.confidence_level}\n\nLimitations: {', '.join(score_result.limitations)}"
+                    beacon.score_explanation = f"Rationale: {', '.join(score_result.rationale or [])}\n\nConfidence: {score_result.confidence_level}\n\nLimitations: {', '.join(score_result.limitations or [])}"
 
                     # Sync forensic metadata back to the evidence_files JSON list in Beacon
                     if beacon.evidence_files:

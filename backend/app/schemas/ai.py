@@ -17,7 +17,7 @@ class ForensicOCRAnalysis(BaseModel):
     key_elements_detected: KeyElementsResults
     narrative_alignment: str = Field(..., description="none | partial | strong")
     objective_notes: List[str]
-    limitations: List[str]
+    limitations: Optional[List[str]] = Field(default_factory=list)
 
 # --- Forensic Audio/Video Analysis Schema ---
 
@@ -34,7 +34,7 @@ class ForensicAudioAnalysis(BaseModel):
     key_elements_detected: AudioKeyElements
     narrative_alignment: str = Field(..., description="none | partial | strong")
     objective_notes: List[str]
-    limitations: List[str]
+    limitations: Optional[List[str]] = Field(default_factory=list)
 
 # --- Layer 1: Deterministic Evidence Flags ---
 
@@ -94,7 +94,7 @@ class ScoringResult(BaseModel):
     rationale: List[str] = Field(..., description="Objective, bullet-point explanation")
     confidence_level: str = Field(..., description="Low / Medium / High")
     
-    limitations: List[str] = Field(..., description="What could not be verified")
+    limitations: Optional[List[str]] = Field(default_factory=list, description="What could not be verified")
     final_safety_statement: str = Field(..., description="Mandatory disclaimer")
 
 class AIAnalysisResult(BaseModel):
