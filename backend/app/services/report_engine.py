@@ -138,7 +138,7 @@ class ReportEngine:
                         else:
                             return f"File: {ev.file_name}"
                     except Exception:
-                        return f"File: {ev.file_name} (Analysis failed)"
+                        return f"File: {ev.file_name}"
 
                 # Parallel Analysis
                 descriptions = await asyncio.gather(*(get_description(ev) for ev in new_items))
@@ -214,93 +214,92 @@ class ReportEngine:
             has_placeholder = any(re.search(p, llm_response, re.IGNORECASE) for p in completion_patterns)
             
             if has_placeholder:
-                try:
-                    # Force normalization of hallucinations to our standard placeholders for replacement
-                    llm_response = re.sub(r"BCN-\d+", "CASE_ID_PLACEHOLDER", llm_response, flags=re.IGNORECASE)
-                    
-                    case_id = await CaseService.generate_next_case_id(supabase_session)
-                    
-                    # Generate Secret Key
-                    raw_hex = secrets.token_hex(4).upper() 
-                    secret_key_display = f"{raw_hex[:4]}-{raw_hex[4:]}"
-                    secret_key_hash = pwd_context.hash(secret_key_display)
-                    
-                    # Replace placeholders (Extremely Case-insensitive & Robust)
-                    # Replace placeholders (Extremely Case-insensitive & Robust to suffixes)
-                    # We use [\w-]* to swallow any hallucinated suffixes like _ID_1234 or _key_5678
-                    llm_response = re.sub(r"CASE_ID_PLACEHOLDER[\w-]*", case_id, llm_response, flags=re.IGNORECASE)
-                    llm_response = re.sub(r"SECRET_KEY_PLACEHOLDER[\w-]*", secret_key_display, llm_response, flags=re.IGNORECASE)
-                    
-                    # Fallback Replacement: If AI still used a weird format
-                    llm_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", rf"\1{case_id}", llm_response, flags=re.I)
-                    # Fix for Secret Key: If AI output "Your - X" or "Key is X", try to replace. 
-                    # But most importantly, if we still don't see the key, we will APPEND it below.
-                    llm_response = re.sub(r"(Secret Key is\s*|Your - )([A-Z0-9-]+)", rf"Secret Key is {secret_key_display}", llm_response, flags=re.I)
-
-                    # FINAL SAFETY NET: If Secret Key is NOT in the text, append it.
-                    if secret_key_display not in llm_response and "SECRET_KEY_PLACEHOLDER" not in llm_response:
-                            # Strip any trailing "Your - " gibberish at the end
-                            llm_response = re.sub(r"Your - \s*$", "", llm_response).strip()
-                            llm_response += f"\n\nYour Secret Key is {secret_key_display}. Please save this."
-                    
-                    # Get reported_at timestamp
-                    from app.core.time_utils import get_utc_now
-                    reported_at_utc = get_utc_now()
-                    
-                    # Phase 1.5: Gather evidence files metadata from Supabase
-                    evidence_files = await cls._get_evidence_metadata(report_id, supabase_session)
-                    
-                    # ---------------------------------------------------------
-                    # PHASE 1: INTAKE (FAIL-SAFE)
-                    # ---------------------------------------------------------
-                    new_case = Beacon(
-                        case_id=case_id,
-                        reported_at=reported_at_utc,
-                        secret_key=secret_key_display,
-                        secret_key_hash=secret_key_hash,
-                        status="Received",
-                        incident_summary=final_report.get("incident_summary") or final_report.get("what") or "In-progress report",
-                        evidence_files=evidence_files,
-                        analysis_status="pending"
-                    )
-                    supabase_session.add(new_case)
-                    
-                    # Update Report record in Supabase
-                    stmt_rep = select(Report).where(Report.id == UUIDType(report_id))
-                    rep_res = await supabase_session.execute(stmt_rep)
-                    report_rec = rep_res.scalar_one_or_none()
-                    if report_rec:
-                        report_rec.case_id = case_id
-                        report_rec.status = "NEW"
-
-                    print(f"[REPORT_ENGINE] STAGE 4: Finalizing to Supabase: {case_id}", flush=True)
-                    await supabase_session.commit()
-                    
-                    print(f"[REPORT_ENGINE] STAGE 5: Phase 1 Intake Complete: {case_id}", flush=True)
-                    logger.info(f"phase1_intake_complete: {case_id}")
-                    
-                    # Set Workflow Status to COMPLETED to lock the chat UI
-                    next_step = "COMPLETED"
-
-                    # ---------------------------------------------------------
-                    # PHASE 2: TRIGGER ASYNC ANALYSIS
-                    # ---------------------------------------------------------
-                    if background_tasks:
-                        print(f"[REPORT_ENGINE] Triggering automated background scoring for: {case_id}", flush=True)
-                        from app.services.scoring_service import ScoringService
-                        background_tasks.add_task(ScoringService.run_background_scoring, report_id, case_id)
-                    else:
-                        print(f"[REPORT_ENGINE] WARNING: No background_tasks object found. Automated analysis NOT triggered for: {case_id}", flush=True)
+                # Force normalization of hallucinations to our standard placeholders for replacement
+                llm_response = re.sub(r"BCN-\d+", "CASE_ID_PLACEHOLDER", llm_response, flags=re.IGNORECASE)
                 
-                except Exception as e:
-                    print(f"[REPORT_ENGINE] CRITICAL FINALIZATION ERROR: {e}", flush=True)
-                    import traceback
-                    traceback.print_exc()
-                    # Fallback response so user isn't left hanging
-                    llm_response = (
-                        "Thank you for your report. We have received it, but encountered a temporary system error generating your tracking ID. "
-                        "Please try submitting again or contact support if this persists."
-                    )
+                # Phase 1: INTAKE (FAIL-SAFE with Retries for Race Conditions)
+                max_retries = 3
+                retry_count = 0
+                while retry_count < max_retries:
+                    try:
+                        case_id = await CaseService.generate_next_case_id(supabase_session)
+                        
+                        # Generate Unique Secret Key
+                        secret_key_display = await CaseService.generate_unique_secret_key(supabase_session)
+                        secret_key_hash = pwd_context.hash(secret_key_display)
+                        
+                        # Replace placeholders (Extremely Case-insensitive & Robust)
+                        temp_llm_response = re.sub(r"CASE_ID_PLACEHOLDER[\w-]*", case_id, llm_response, flags=re.IGNORECASE)
+                        temp_llm_response = re.sub(r"SECRET_KEY_PLACEHOLDER[\w-]*", secret_key_display, temp_llm_response, flags=re.IGNORECASE)
+                        
+                        # Fallback Replacement: If AI still used a weird format
+                        temp_llm_response = re.sub(r"(Case ID is\s+)([A-Z0-9-]+)", rf"\1{case_id}", temp_llm_response, flags=re.I)
+                        temp_llm_response = re.sub(r"(Secret Key is\s*|Your - )([A-Z0-9-]+)", rf"Secret Key is {secret_key_display}", temp_llm_response, flags=re.I)
+
+                        # FINAL SAFETY NET: If Secret Key is NOT in the text, append it.
+                        if secret_key_display not in temp_llm_response and "SECRET_KEY_PLACEHOLDER" not in temp_llm_response:
+                                temp_llm_response = re.sub(r"Your - \s*$", "", temp_llm_response).strip()
+                                temp_llm_response += f"\n\nYour Secret Key is {secret_key_display}. Please save this."
+                        
+                        # Get reported_at timestamp
+                        from app.core.time_utils import get_utc_now
+                        reported_at_utc = get_utc_now()
+                        
+                        # Phase 1.5: Gather evidence files metadata from Supabase
+                        evidence_files = await cls._get_evidence_metadata(report_id, supabase_session)
+                        
+                        new_case = Beacon(
+                            case_id=case_id,
+                            reported_at=reported_at_utc,
+                            secret_key=secret_key_display,
+                            secret_key_hash=secret_key_hash,
+                            status="Received",
+                            incident_summary=final_report.get("incident_summary") or final_report.get("what") or "In-progress report",
+                            evidence_files=evidence_files,
+                            analysis_status="pending"
+                        )
+                        supabase_session.add(new_case)
+                        
+                        # Update Report record in Supabase
+                        stmt_rep = select(Report).where(Report.id == UUIDType(report_id))
+                        rep_res = await supabase_session.execute(stmt_rep)
+                        report_rec = rep_res.scalar_one_or_none()
+                        if report_rec:
+                            report_rec.case_id = case_id
+                            report_rec.status = "NEW"
+
+                        print(f"[REPORT_ENGINE] STAGE 4: Finalizing to Supabase: {case_id}", flush=True)
+                        await supabase_session.commit()
+                        
+                        llm_response = temp_llm_response # Finalize the response text
+                        print(f"[REPORT_ENGINE] STAGE 5: Phase 1 Intake Complete: {case_id}", flush=True)
+                        logger.info(f"phase1_intake_complete: {case_id}")
+                        next_step = "COMPLETED"
+                        break # Success!
+                        
+                    except Exception as e:
+                        # Explicitly handle IntegrityError for duplicate case IDs
+                        from sqlalchemy.exc import IntegrityError
+                        if isinstance(e, IntegrityError) or "UniqueViolationError" in str(e):
+                            print(f"[REPORT_ENGINE] Race condition detected for {case_id}. Retrying {retry_count+1}/{max_retries}...", flush=True)
+                            await supabase_session.rollback()
+                            retry_count += 1
+                            if retry_count >= max_retries:
+                                raise e # Give up after 3 tries
+                            continue
+                        else:
+                            # Other errors should be handled by the outer try-block
+                            raise e
+
+                # ---------------------------------------------------------
+                # PHASE 2: TRIGGER ASYNC ANALYSIS
+                # ---------------------------------------------------------
+                if background_tasks:
+                    print(f"[REPORT_ENGINE] Triggering automated background scoring for: {case_id}", flush=True)
+                    from app.services.scoring_service import ScoringService
+                    background_tasks.add_task(ScoringService.run_background_scoring, report_id, case_id)
+                else:
+                    print(f"[REPORT_ENGINE] WARNING: No background_tasks object found. Automated analysis NOT triggered for: {case_id}", flush=True)
 
             # Always commit all turns
             await supabase_session.commit()

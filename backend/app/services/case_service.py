@@ -24,41 +24,56 @@ class CaseService:
         Logic:
         1. Find the maximum existing Case ID that matches the pattern BCN + digits.
         2. Extract numbers, increment by 1.
-        3. Iterate until a free ID is found (handling potential race conditions optimistically).
+        3. Iterate until a free ID is found (guaranteeing uniqueness).
         """
         
-        # Query for the max case_id starting with 'BCN'
-        # Note: String comparison isn't perfect for numbers, but with fixed 12 digits it works lexically.
-        # However, to be safe, we should extract keys. 
-        # Since we can't easily do regex extraction in pure SQL agnostic way without specific PG functions (which we have),
-        # simple max(case_id) is decent if formatting is strict.
+        # Use PostgreSQL regex to find only numeric Case IDs that match the prefix
+        # This prevents non-numeric IDs (like BCNTEST) from interfering with the counter.
+        # '~' is the PostgreSQL operator for POSIX regular expressions.
+        stmt = select(Beacon.case_id).where(
+            Beacon.case_id.like(f"{cls.PREFIX}%"),
+            Beacon.case_id.op("~")(f"^{cls.PREFIX}\\d+$")
+        ).order_by(text("SUBSTRING(case_id, 4)::BIGINT DESC")).limit(1)
         
-        # Let's try to get the 'max' BCN ID.
-        stmt = select(func.max(Beacon.case_id)).where(Beacon.case_id.like(f"{cls.PREFIX}%"))
         result = await session.execute(stmt)
         max_id = result.scalar_one_or_none()
         
         if not max_id:
-            # First one
-            return f"{cls.PREFIX}{cls.STARTING_ID_NUM}"
-        
-        # Extract matches
-        # Expecting BCN1234...
-        match = re.match(r"^BCN(\d+)$", max_id)
-        if match:
-            current_num = int(match.group(1))
-            next_num = current_num + 1
+            next_num = cls.STARTING_ID_NUM
         else:
-            # If max_id exists but doesn't match numeric pattern (maybe legacy data), 
-            # we default to start or fallback?
-            # Safe bet: Start from our defined start point, or scan specifically logic better.
-            # Assuming we can trust the prefix search to return something relevant.
-            # If we have "BCN_TEST", lexical max might be odd.
-            # Let's fallback to starting ID if parsing fails.
-             return f"{cls.PREFIX}{cls.STARTING_ID_NUM}"
+            match = re.match(r"^BCN(\d+)$", max_id)
+            if match:
+                next_num = int(match.group(1)) + 1
+            else:
+                next_num = cls.STARTING_ID_NUM
 
-        # Ensure we don't go backwards if existing data is lower than start
         if next_num < cls.STARTING_ID_NUM:
             next_num = cls.STARTING_ID_NUM
             
-        return f"{cls.PREFIX}{next_num}"
+        # Uniqueness Guarantee Loop
+        while True:
+            case_id = f"{cls.PREFIX}{next_num}"
+            existing_stmt = select(Beacon.case_id).where(Beacon.case_id == case_id)
+            existing_res = await session.execute(existing_stmt)
+            if not existing_res.scalar_one_or_none():
+                return case_id
+            next_num += 1
+
+    @classmethod
+    async def generate_unique_secret_key(cls, session: AsyncSession) -> str:
+        """
+        Generates a unique random Secret Key.
+        Format: XXXX-XXXX (8 chars hex).
+        """
+        import secrets
+        while True:
+            # We use 4 bytes (8 hex chars) which provides 4.2 billion combinations.
+            # For 100% guarantee, we check existence in DB.
+            raw_hex = secrets.token_hex(4).upper()
+            secret_key = f"{raw_hex[:4]}-{raw_hex[4:]}"
+            
+            # Check for collision
+            stmt = select(Beacon.case_id).where(Beacon.secret_key == secret_key)
+            result = await session.execute(stmt)
+            if not result.scalar_one_or_none():
+                return secret_key
