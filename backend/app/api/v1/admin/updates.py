@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.beacon import Beacon
 from app.models.beacon_update import BeaconUpdate
-from app.schemas.report import NGOUpdateRequest, NGOUpdateResponse
+from app.schemas.report import AdminUpdateRequest, AdminUpdateResponse
 from app.services.llm_agent import LLMAgent
 from datetime import datetime
 import uuid
@@ -12,14 +12,14 @@ from app.api.deps import get_current_admin
 router = APIRouter(dependencies=[Depends(get_current_admin)])
 
 
-@router.post("/{id}/update", response_model=NGOUpdateResponse)
+@router.post("/{id}/update", response_model=AdminUpdateResponse)
 async def update_case_status(
     id: uuid.UUID,
-    request: NGOUpdateRequest,
+    request: AdminUpdateRequest,
     db: AsyncSession = Depends(get_db)
 ):
     """
-    NGO submits an internal update.
+    Admin submits an internal update.
     LLM rewrites it for public display.
     """
     # 1. Fetch Case
@@ -53,7 +53,7 @@ async def update_case_status(
     await db.commit()
     await db.refresh(update_record)
     
-    return NGOUpdateResponse(
+    return AdminUpdateResponse(
         status=case.status,
         public_update=public_text,
         timestamp=case.last_updated_at

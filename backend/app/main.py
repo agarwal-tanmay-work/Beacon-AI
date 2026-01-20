@@ -47,12 +47,15 @@ async def lifespan(app: FastAPI):
             
     logger.info("startup", project=settings.PROJECT_NAME)
     yield
+    # Cleanup
+    from app.services.ai_service import GroqService
+    await GroqService.close_client()
     logger.info("shutdown")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version="5.0.0",
-    description="Government-grade Anti-Corruption Reporting System",
+    description="Admin-grade Anti-Corruption Reporting System",
     lifespan=lifespan,
     docs_url=f"{settings.API_V1_STR}/docs",
     openapi_url=f"{settings.API_V1_STR}/openapi.json",

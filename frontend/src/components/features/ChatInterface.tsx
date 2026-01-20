@@ -261,7 +261,7 @@ export function ChatInterface() {
     };
 
     return (
-        <div className="w-full max-w-6xl mx-auto flex flex-col gap-6 h-full">
+        <div className="w-full max-w-6xl mx-auto flex flex-col gap-6 h-full pt-20 md:pt-0">
             {/* Main Chat Card */}
             <div className="w-full bg-black/40 backdrop-blur-3xl border border-white/10 rounded-t-[2rem] rounded-b-xl overflow-hidden flex flex-col h-full min-h-[500px] shadow-2xl relative">
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Body
+from fastapi import APIRouter, Depends, Body, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from typing import List
@@ -18,6 +18,8 @@ import os
 import hashlib
 from typing import List, Optional, Any
 from app.api.deps import get_current_admin
+from app.services.storage_service import StorageService
+from app.services.scoring_service import ScoringService
 
 router = APIRouter(dependencies=[Depends(get_current_admin)])
 
@@ -164,7 +166,7 @@ async def get_report_detail(
             "id": str(u.id),
             "public_update": u.public_update,
             "created_at": u.created_at,
-            "updated_by": "NGO" # Placeholder as model usually doesn't store this yet or not required for display
+            "updated_by": "Admin" # Updated from NGO/Authority to reflect broader administrative role
         })
 
     return AdminReportSchema(
@@ -252,7 +254,7 @@ async def get_case_messages(
             attachments=[
                 MessageAttachment(
                     file_name=att.get("file_name"),
-                    file_path=att.get("file_path", "").replace("\\", "/"),
+                    file_path=StorageService.get_public_url(att.get("file_path", "")),
                     mime_type=att.get("mime_type")
                 ) for att in (msg.attachments or [])
             ],
@@ -267,7 +269,7 @@ async def admin_send_message(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    NGO sends a message to the user.
+    Admin sends a message to the user.
     """
     case = await db.get(Beacon, id)
     if not case:
@@ -275,7 +277,7 @@ async def admin_send_message(
         
     new_message = BeaconMessage(
         case_id=case.case_id,
-        sender_role="ngo",
+        sender_role="admin",
         content=request.content,
         attachments=[att.model_dump() for att in request.attachments]
     )
@@ -290,7 +292,7 @@ async def admin_send_message(
         attachments=[
             MessageAttachment(
                 file_name=att.get("file_name"),
-                file_path=att.get("file_path", "").replace("\\", "/"),
+                file_path=StorageService.get_public_url(att.get("file_path", "")),
                 mime_type=att.get("mime_type")
             ) for att in (new_message.attachments or [])
         ],
@@ -304,51 +306,39 @@ async def upload_admin_file(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Upload a file for the NGO communication channel.
+    Upload a file for the Admin communication channel.
     """
     case = await db.get(Beacon, id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
         
     try:
-        from app.services.storage_service import StorageService
         from app.core.config import settings
-        UPLOAD_DIR = "uploads"
-        # SECURITY NOTE: In prod, use S3 or similar. Local storage for demo.
-        if not os.path.exists(UPLOAD_DIR):
-            os.makedirs(UPLOAD_DIR)
         
         content = await file.read()
-        file_ext = os.path.splitext(file.filename)[1]
-        unique_filename = f"{uuid.uuid4()}{file_ext}"
-        file_path = ""
-
-        # Production Upload
-        if settings.SUPABASE_URL and settings.SUPABASE_KEY and settings.ENVIRONMENT != "local_dev":
-            try:
-                upload_res = await StorageService.upload_file(content, file.filename, file.content_type or "application/octet-stream")
-                file_path = f"supastorage://{upload_res['bucket']}/{upload_res['path']}"
-            except Exception as e:
-                # Log and fallback to local
-                print(f"[ADMIN_UPLOAD] Supabase upload failed: {e}")
         
-        if not file_path:
-            local_path = os.path.join(UPLOAD_DIR, unique_filename).replace("\\", "/")
-            with open(local_path, "wb") as f:
-                f.write(content)
-            file_path = local_path
-            
+        # Cloud-Only Storage (Supabase)
+        try:
+            upload_res = await StorageService.upload_file(content, file.filename, file.content_type or "application/octet-stream")
+            file_path = f"supastorage://{upload_res['bucket']}/{upload_res['path']}"
+        except Exception as sup_err:
+            print(f"[ADMIN_UPLOAD] Supabase upload failed: {sup_err}")
+            raise HTTPException(status_code=503, detail="Cloud storage unavailable. Attachment failed.")
+        
         return SecureUploadResponse(
             file_name=file.filename,
-            file_path=file_path,
+            file_path=StorageService.get_public_url(file_path),
             mime_type=file.content_type or "application/octet-stream"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
 
 @router.post("/{id}/analyze", status_code=202)
 async def trigger_reanalysis(
     id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -359,9 +349,6 @@ async def trigger_reanalysis(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
         
-    from app.services.scoring_service import ScoringService
-    from fastapi import BackgroundTasks
-    
     # Reset analysis status so it doesn't look stuck if it was 'pending' but errored
     case.analysis_status = "pending"
     case.analysis_attempts = 0
@@ -392,9 +379,7 @@ async def trigger_reanalysis(
         raise HTTPException(status_code=404, detail="Original reporting session data not found for this case. Evidence or history may be missing.")
     
     # Trigger background task
-    from fastapi import BackgroundTasks
-    bt = BackgroundTasks()
     # Signature: run_background_scoring(session_id: str, case_id: str)
-    bt.add_task(ScoringService.run_background_scoring, report_id, case.case_id)
+    background_tasks.add_task(ScoringService.run_background_scoring, report_id, case.case_id)
     
     return {"message": "Analysis triggered manually", "case_id": case.case_id}

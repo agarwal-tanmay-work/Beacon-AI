@@ -17,6 +17,7 @@ import hashlib
 from typing import List
 from fastapi import UploadFile, File, Form
 from app.core.config import settings
+from app.services.storage_service import StorageService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -133,7 +134,7 @@ async def track_case(
                     attachments=[
                         MessageAttachment(
                             file_name=att.get("file_name"),
-                            file_path=att.get("file_path", "").replace("\\", "/"),
+                            file_path=StorageService.get_public_url(att.get("file_path", "")),
                             mime_type=att.get("mime_type")
                         ) for att in (msg.attachments or [])
                     ],
@@ -156,7 +157,7 @@ async def send_message(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Send a message from the user to the NGO (attached to a case).
+    Send a message from the user to the Admin (attached to a case).
     """
     # 1. Verify Auth (Inline for now to avoid dependency circles)
     stmt = select(Beacon).options(load_only(Beacon.case_id, Beacon.secret_key, Beacon.secret_key_hash)).where(Beacon.case_id == request.case_id)
@@ -193,7 +194,7 @@ async def send_message(
             attachments=[
                 MessageAttachment(
                     file_name=att.get("file_name"),
-                    file_path=att.get("file_path", "").replace("\\", "/"),
+                    file_path=StorageService.get_public_url(att.get("file_path", "")),
                     mime_type=att.get("mime_type")
                 ) for att in (new_message.attachments or [])
             ],

@@ -94,12 +94,12 @@ class SecureUploadResponse(BaseModel):
     file_path: str
     mime_type: str
 
-class NGOUpdateRequest(BaseModel):
+class AdminUpdateRequest(BaseModel):
     raw_update: str
-    updated_by: Optional[str] = "NGO_ADMIN"
+    updated_by: Optional[str] = "ADMIN"
     status: Optional[str] = None
 
-class NGOUpdateResponse(BaseModel):
+class AdminUpdateResponse(BaseModel):
     status: str
     public_update: str
     timestamp: Any

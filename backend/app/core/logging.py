@@ -6,7 +6,7 @@ from app.core.config import settings
 def setup_logging():
     """
     Configure structured logging for the application.
-    Government-grade logging requirements:
+    Professional-grade logging requirements:
     - JSON output for machine parsing
     - Timestamp presence
     - Log level filtering

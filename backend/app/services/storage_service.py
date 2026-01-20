@@ -96,3 +96,22 @@ class StorageService:
         except Exception as e:
             logger.error("storage_download_failed", error=str(e), path=path)
             raise e
+
+    @classmethod
+    def get_public_url(cls, file_path: str) -> str:
+        """
+        Converts a supastorage:// internal path to a public HTTP URL.
+        If it's already a URL or local path, returns as is.
+        """
+        if not file_path or not file_path.startswith("supastorage://"):
+            return file_path
+        
+        try:
+            parts = file_path.replace("supastorage://", "").split("/", 1)
+            if len(parts) == 2:
+                bucket, path = parts
+                # {supabase_url}/storage/v1/object/public/{bucket}/{path}
+                return f"{settings.SUPABASE_URL}/storage/v1/object/public/{bucket}/{path}"
+        except Exception:
+            pass
+        return file_path

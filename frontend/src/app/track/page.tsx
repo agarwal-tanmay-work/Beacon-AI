@@ -25,7 +25,7 @@ interface TrackResult {
 
 interface TrackMessage {
     id: string;
-    sender_role: 'user' | 'ngo';
+    sender_role: 'user' | 'admin';
     content?: string;
     attachments: MessageAttachment[];
     timestamp: string;
@@ -158,7 +158,7 @@ export default function TrackPage() {
                 />
             </div>
 
-            <div className="relative z-10 w-full max-w-4xl mx-auto px-6 pt-6 pb-20 flex flex-col items-center gap-8 md:gap-12">
+            <div className="relative z-10 w-full max-w-4xl mx-auto px-6 pt-20 md:pt-6 pb-20 flex flex-col items-center gap-8 md:gap-12">
                 {/* Header */}
                 <div className="text-center space-y-4">
                     <motion.div
@@ -414,7 +414,7 @@ export default function TrackPage() {
                                                             )}
                                                         </div>
                                                         <span className="text-xs text-white/20 mt-2 font-mono uppercase tracking-widest px-1">
-                                                            {msg.sender_role === 'user' ? 'You' : 'NGO'} • {formatToIST(msg.timestamp, { hour: undefined, minute: undefined })}
+                                                            {msg.sender_role === 'user' ? 'You' : 'Admin'} • {formatToIST(msg.timestamp, { hour: undefined, minute: undefined })}
                                                         </span>
                                                     </div>
                                                 ))

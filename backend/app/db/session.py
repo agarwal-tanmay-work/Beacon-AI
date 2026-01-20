@@ -69,7 +69,10 @@ engine = create_async_engine(
     db_url,
     echo=settings.ENVIRONMENT == "development",
     future=True,
-    poolclass=NullPool,
+    pool_size=10,        # Reduced initial pool size for Supabase stability
+    max_overflow=20,     # Allow more temporary connections under load
+    pool_timeout=30,      # Wait 30s before giving up
+    pool_recycle=1800,    # Recycle connections after 30 mins
     connect_args=connect_args,
 )
 

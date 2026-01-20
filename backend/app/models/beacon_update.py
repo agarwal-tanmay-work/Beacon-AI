@@ -17,8 +17,8 @@ class BeaconUpdate(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     case_id = Column(String, ForeignKey("beacon.case_id"), nullable=False, index=True)
     
-    raw_update = Column(Text, nullable=False)    # Original text from NGO
+    raw_update = Column(Text, nullable=True) # Original text from Admin
     public_update = Column(Text, nullable=False) # LLM-rewritten text for public
-    updated_by = Column(String, nullable=True)   # NGO User ID or Name
+    updated_by = Column(String, nullable=True)   # Admin User ID or Name
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

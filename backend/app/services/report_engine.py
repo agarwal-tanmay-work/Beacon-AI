@@ -34,6 +34,7 @@ from app.models.beacon import Beacon
 from app.schemas.report import MessageResponse
 from app.services.llm_agent import LLMAgent
 from app.services.case_service import CaseService
+from app.services.storage_service import StorageService
 from uuid import UUID as UUIDType
 from passlib.context import CryptContext
 import logging
@@ -60,8 +61,9 @@ class ReportEngine:
     - evidence_files (JSON metadata)
     """
     
-    @staticmethod
+    @classmethod
     async def process_message(
+        cls,
         report_id: str,
         user_message: str,
         supabase_session: AsyncSession,
@@ -244,8 +246,8 @@ class ReportEngine:
                         from app.core.time_utils import get_utc_now
                         reported_at_utc = get_utc_now()
                         
-                        # Gather evidence files metadata from Supabase
-                        evidence_files = await ReportEngine._get_evidence_metadata(report_id, supabase_session)
+                        # Phase 1.5: Gather evidence files metadata from Supabase
+                        evidence_files = await cls._get_evidence_metadata(report_id, supabase_session)
                         
                         # ---------------------------------------------------------
                         # PHASE 1: INTAKE (FAIL-SAFE)
@@ -317,35 +319,27 @@ class ReportEngine:
             await supabase_session.rollback()
             raise
 
-    @staticmethod
-    async def _get_evidence_metadata(session_id: str, supabase_session: AsyncSession) -> list:
-        """
-        Retrieves evidence metadata from Supabase for Beacon enrichment.
-        """
+    @classmethod
+    async def _get_evidence_metadata(cls, session_id: str, supabase_session: AsyncSession) -> list:
+        """Fetch and format evidence metadata for the beacon record."""
+        from sqlalchemy import select
         stmt = select(Evidence).where(Evidence.report_id == UUIDType(session_id))
         result = await supabase_session.execute(stmt)
         evidence_objs = result.scalars().all()
         
         results = []
         for ev in evidence_objs:
-            # Reconstruct URL if it's supastorage
-            from app.core.config import settings
-            path_suffix = ev.file_path.replace("supastorage://evidence/", "")
-            public_url = f"{settings.SUPABASE_URL}/storage/v1/object/public/evidence/{path_suffix}" if "supastorage://" in ev.file_path else ev.file_path
-            
             results.append({
-                "bucket": "evidence",
-                "path": path_suffix,
-                "full_url": public_url,
                 "file_name": ev.file_name,
                 "mime_type": ev.mime_type,
                 "size_bytes": ev.size_bytes,
-                "storage_provider": "supabase"
+                "file_path": ev.file_path,
+                "full_url": StorageService.get_public_url(ev.file_path)
             })
         return results
 
-    @staticmethod
-    async def initialize_report(report_id: str, access_token: str):
+    @classmethod
+    async def initialize_report(cls, report_id: str, access_token: str):
         """
         Initialize a new report session in SUPABASE.
         """
@@ -384,8 +378,8 @@ class ReportEngine:
             
             print(f"[REPORT_ENGINE] Initialized Supabase session: {report_id}", flush=True)
 
-    @staticmethod
-    async def get_session_status(session_id: str) -> dict:
+    @classmethod
+    async def get_session_status(cls, session_id: str) -> dict:
         """
         Get session status from Supabase.
         """

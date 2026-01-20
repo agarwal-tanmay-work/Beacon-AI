@@ -35,7 +35,19 @@ async def run_init_db():
             # 10 seconds should be plenty for a healthy connection
             async with asyncio.timeout(10):
                 async with engine.begin() as conn:
-                    await conn.run_sync(Base.metadata.create_all)
+                    # Check if at least one core table exists before running create_all
+                    # This avoids overhead on every startup if DB is healthy
+                    from sqlalchemy import inspect
+                    
+                    def check_tables(connection):
+                        inspector = inspect(connection)
+                        return inspector.has_table("beacon")
+                    
+                    if await conn.run_sync(check_tables):
+                        logger.info("remote_db_already_initialized", message="Core tables found, skipping create_all")
+                    else:
+                        logger.info("remote_db_creating_tables", message="Tables missing, running create_all")
+                        await conn.run_sync(Base.metadata.create_all)
             logger.info("remote_db_init_complete")
         except TimeoutError:
             logger.error("remote_db_init_timeout", message="Connection to database timed out after 10s. Check network/firewall/URL settings.")

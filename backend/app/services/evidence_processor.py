@@ -10,6 +10,7 @@ import shutil
 from typing import List, Optional, Set
 from app.schemas.ai import EvidenceMetadata, EvidenceType
 from app.models.report import Evidence
+from app.services.storage_service import StorageService
 
 logger = structlog.get_logger()
 
@@ -41,7 +42,27 @@ class EvidenceProcessor:
         
         # 0. Basic Validation & File Loading
         try:
-            file_size = os.path.getsize(file_path)
+            content = None
+            file_size = 0
+            
+            if file_path.startswith("supastorage://"):
+                # Cloud Path: supastorage://bucket/path
+                parts = file_path.replace("supastorage://", "").split("/", 1)
+                if len(parts) == 2:
+                    bucket, path = parts
+                    logger.info("downloading_from_cloud", bucket=bucket, path=path)
+                    content = StorageService.download_file(bucket, path)
+                    file_size = len(content)
+                else:
+                    raise ValueError(f"Invalid supastorage path: {file_path}")
+            else:
+                # Local Path (for dev or legacy)
+                if not os.path.exists(file_path):
+                     raise FileNotFoundError(f"Local file not found: {file_path}")
+                file_size = os.path.getsize(file_path)
+                with open(file_path, "rb") as f:
+                    content = f.read()
+
             if file_size > cls.MAX_FILE_SIZE:
                 return EvidenceMetadata(
                     file_name=evidence.file_name,
@@ -52,9 +73,6 @@ class EvidenceProcessor:
                     object_labels=["error: file too large (>5MB)"]
                 )
 
-            with open(file_path, "rb") as f:
-                content = f.read()
-            
             file_hash = hashlib.sha256(content).hexdigest()
             is_empty = len(content) == 0
             is_duplicate = file_hash in seen_hashes

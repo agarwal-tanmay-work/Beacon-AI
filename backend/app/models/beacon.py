@@ -41,7 +41,7 @@ class Beacon(Base):
     credibility_score = Column(Integer, nullable=True)  # 1-100
     score_explanation = Column(Text, nullable=True)     # Added to match DB
     credibility_breakdown = Column(JSON, nullable=True) # Full 8-dimension breakdown
-    authority_summary = Column(Text, nullable=True)     # Internal neutral justification
+    admin_summary = Column(Text, nullable=True)     # Internal neutral justification
 
     # Secret Access & Status Tracking (New)
     secret_key = Column(String(10), nullable=True)      # Visible Secret Key (XXXX-XXXX)
@@ -49,7 +49,7 @@ class Beacon(Base):
     status = Column(String, default="Received", nullable=False) # Current Status Label
     
     # Status Updates (Sync from beacon_update)
-    last_raw_status = Column(Text, nullable=True)       # Raw NGO input
+    last_raw_status = Column(Text, nullable=True)       # Raw Admin input
     last_framed_status = Column(Text, nullable=True)    # LLM-framed public output
     
     last_updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)

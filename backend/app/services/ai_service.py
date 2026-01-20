@@ -17,12 +17,26 @@ class GroqService:
     """
     
     BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
-    TIMEOUT = 10.0 # Reduced from 60.0 for fail-fast
+    TIMEOUT = 20.0 # Increased from 10.0 for better baseline resilience
     
     # Updated Models (Jan 2026)
     # Downgraded for speed and rate-limit resilience
     TEXT_MODEL = "llama-3.1-8b-instant"
     VISION_MODEL = "llama-3.2-11b-vision-preview"
+
+    _client: Optional[httpx.AsyncClient] = None
+
+    @classmethod
+    async def get_client(cls) -> httpx.AsyncClient:
+        if cls._client is None or cls._client.is_closed:
+            cls._client = httpx.AsyncClient(timeout=cls.TIMEOUT)
+        return cls._client
+
+    @classmethod
+    async def close_client(cls):
+        if cls._client and not cls._client.is_closed:
+            await cls._client.aclose()
+            cls._client = None
 
     @classmethod
     async def _call_groq(cls, messages: List[Dict[str, Any]], schema_class: Optional[Type[T]] = None, model: str = TEXT_MODEL, timeout: Optional[float] = None) -> Tuple[Optional[T | str], Optional[int]]:
@@ -55,40 +69,40 @@ class GroqService:
 
         effective_timeout = timeout if timeout is not None else cls.TIMEOUT
 
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
+        client = await cls.get_client()
+        try:
+            response = await client.post(
                     cls.BASE_URL, 
                     headers=headers, 
                     json=payload, 
                     timeout=effective_timeout
                 )
                 
-                if response.status_code == 429:
-                    retry_after = response.headers.get("Retry-After")
-                    wait_seconds = int(retry_after) if retry_after and retry_after.isdigit() else 1
-                    logger.error("groq_rate_limit_hit", status=429, retry_after=wait_seconds)
-                    return None, wait_seconds
-                    
-                if response.status_code != 200:
-                    logger.error("groq_api_error", status=response.status_code, body=response.text[:500])
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+                wait_seconds = int(retry_after) if retry_after and retry_after.isdigit() else 1
+                logger.error("groq_rate_limit_hit", status=429, retry_after=wait_seconds)
+                return None, wait_seconds
+                
+            if response.status_code != 200:
+                logger.error("groq_api_error", status=response.status_code, body=response.text[:500])
+                return None, None
+                
+            data = response.json()
+            content = data["choices"][0]["message"]["content"]
+            
+            if schema_class:
+                try:
+                    return schema_class.model_validate_json(content), None
+                except Exception as e:
+                    logger.error("groq_parse_error", error=str(e), content=content)
                     return None, None
                     
-                data = response.json()
-                content = data["choices"][0]["message"]["content"]
-                
-                if schema_class:
-                    try:
-                        return schema_class.model_validate_json(content), None
-                    except Exception as e:
-                        logger.error("groq_parse_error", error=str(e), content=content)
-                        return None, None
-                        
-                return content, None
+            return content, None
 
-            except Exception as e:
-                logger.error("groq_request_failed", error=str(e))
-                return None, None
+        except Exception as e:
+            logger.error("groq_request_failed", error=str(e))
+            return None, None
 
     @classmethod
     async def analyze_report(cls, report_text: str) -> Optional[AIAnalysisResult]:

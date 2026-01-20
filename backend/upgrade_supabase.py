@@ -10,12 +10,12 @@ async def upgrade():
             print("Adding credibility_breakdown column...")
             await conn.execute(text("ALTER TABLE beacon ADD COLUMN IF NOT EXISTS credibility_breakdown JSONB;"))
             
-            # Add authority_summary TEXT
-            print("Adding authority_summary column...")
-            await conn.execute(text("ALTER TABLE beacon ADD COLUMN IF NOT EXISTS authority_summary TEXT;"))
+            # Add admin_summary TEXT
+            print("Adding admin_summary column...")
+            await conn.execute(text("ALTER TABLE beacon ADD COLUMN IF NOT EXISTS admin_summary TEXT;"))
             
             # (Optional) If score_explanation exists and you want to keep it, you can. 
-            # But the requirement said authority_summary is stored separately from user-facing data.
+            # But the requirement said admin_summary is stored separately from user-facing data.
             # We already removed score_explanation from the Beacon model.
             
             print("✅ Database Upgrade Successful!")
