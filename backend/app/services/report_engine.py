@@ -251,13 +251,21 @@ class ReportEngine:
                         # Phase 1.5: Gather evidence files metadata from Supabase
                         evidence_files = await cls._get_evidence_metadata(report_id, supabase_session)
                         
+                        # Ensure incident summary is a paragraph and free of placeholders
+                        raw_summary = final_report.get("incident_summary") or final_report.get("what") or "In-progress report"
+                        # Strip placeholders if they leaked into the summary
+                        clean_summary = re.sub(r"(CASE_ID|SECRET_KEY)_PLACEHOLDER", "", raw_summary, flags=re.I).strip()
+                        # Ensure it doesn't end with a colon or weird character
+                        clean_summary = re.sub(r"[:\s]+$", ".", clean_summary)
+                        if not clean_summary.endswith("."): clean_summary += "."
+
                         new_case = Beacon(
                             case_id=case_id,
                             reported_at=reported_at_utc,
                             secret_key=secret_key_display,
                             secret_key_hash=secret_key_hash,
                             status="Received",
-                            incident_summary=final_report.get("incident_summary") or final_report.get("what") or "In-progress report",
+                            incident_summary=clean_summary,
                             evidence_files=evidence_files,
                             analysis_status="pending"
                         )

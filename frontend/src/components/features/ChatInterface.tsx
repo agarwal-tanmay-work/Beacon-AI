@@ -261,9 +261,9 @@ export function ChatInterface() {
     };
 
     return (
-        <div className="w-full max-w-6xl mx-auto flex flex-col gap-6 h-full pt-20 md:pt-0">
+        <div className="w-full max-w-6xl mx-auto flex flex-col h-[100dvh] md:h-full pt-2 md:pt-0 pb-2 md:pb-0">
             {/* Main Chat Card */}
-            <div className="w-full bg-black/40 backdrop-blur-3xl border border-white/10 rounded-t-[2rem] rounded-b-xl overflow-hidden flex flex-col h-full min-h-[500px] shadow-2xl relative">
+            <div className="w-full bg-black/40 backdrop-blur-3xl border border-white/10 rounded-t-[2rem] rounded-b-xl overflow-hidden flex flex-col h-full shadow-2xl relative">
 
                 {/* Header */}
                 <div className="flex items-center gap-3 px-4 md:px-6 py-4 border-b border-white/5 bg-white/5 backdrop-blur-md">
@@ -365,7 +365,7 @@ export function ChatInterface() {
                 </div>
 
                 {/* Input Area */}
-                <div className="p-4 bg-white/[0.02] border-t border-white/5 relative">
+                <div className="p-3 md:p-4 bg-white/[0.02] border-t border-white/5 relative shrink-0">
 
                     {/* Pre-upload Preview (Thumbnails Only) */}
                     <AnimatePresence>
@@ -447,10 +447,15 @@ export function ChatInterface() {
                                     handleSendMessage();
                                 }
                             }}
-                            placeholder="Type your message..."
-                            className="flex-1 bg-transparent border-none text-white placeholder-white/20 focus:outline-none focus:ring-0 text-sm px-2 font-light resize-none py-2 max-h-32 scrollbar-hide"
+                            placeholder="Describe the incident..."
+                            className="flex-1 bg-transparent border-none text-white placeholder-white/20 focus:outline-none focus:ring-0 text-[16px] px-2 font-light resize-none py-2 max-h-32 min-h-[44px] md:min-h-0 scrollbar-hide"
                             disabled={isLocked || loading}
                             rows={1}
+                            onFocus={(e) => {
+                                setTimeout(() => {
+                                    e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                }, 300);
+                            }}
                         />
 
                         <button

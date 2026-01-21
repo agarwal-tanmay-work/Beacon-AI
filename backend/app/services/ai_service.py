@@ -22,7 +22,7 @@ class GroqService:
     # Updated Models (Jan 2026)
     # Downgraded for speed and rate-limit resilience
     TEXT_MODEL = "llama-3.1-8b-instant"
-    VISION_MODEL = "llama-3.2-11b-vision-preview"
+    VISION_MODEL = "none" # Disabling cloud vision as requested
 
     _client: Optional[httpx.AsyncClient] = None
 
@@ -207,6 +207,9 @@ ANALYZE FOR:
 
     @classmethod
     async def perform_forensic_visual_analysis(cls, image_bytes: bytes, mime_type: str, timeout: Optional[float] = None) -> Tuple[Optional[str], Optional[int]]:
+        if cls.VISION_MODEL == "none":
+            return None, None
+
         b64_image = base64.b64encode(image_bytes).decode('utf-8')
         image_url = f"data:{mime_type};base64,{b64_image}"
         
@@ -231,7 +234,7 @@ Keep it neutral. Example: 'Uniformed officer standing on a road next to a vehicl
         messages = [{
             "role": "user",
             "content": (
-                "Write a professional intelligence summary of this report. "
+                "Write a professional intelligence summary of this report in a SINGLE CONCISE PARAGRAPH. "
                 "Preserve details (dates, names, amounts). Anonymize the reporter. "
                 "No fluff. Just the facts. Start directly with the summary content.\n\n"
                 f"Log:\n{conversation_text}"
@@ -273,8 +276,14 @@ Keep it neutral. Example: 'Uniformed officer standing on a road next to a vehicl
             evidence_digest = "\n".join(digest_lines)
 
         system_prompt = """You are Beacon Credibility Engine. Assess narrative vs evidence alignment.
-CORE PRINCIPLES: Credibility != Truth. Skepticism is required.
+CORE PRINCIPLES: Credibility != Truth.
 SCORING: 1. Narrative (0-40), 2. Evidence Strength (0-40), 3. Behavioral Consistency (0-20).
+
+EVIDENCE INTERPRETATION RULES:
+- If an image is 'sharp_high_clarity_image', it is NOT unclear. Do not use 'unclear' in your explanation for such files.
+- 'signal: general_scene_or_object' means a valid scene was captured.
+- If OCR is missing but the image is sharp, treat it as visual-only evidence (e.g., a photo of a location or person).
+- Focus on alignment: Does the presence of this evidence support the user's claim?
 """
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Case:\n{conversation_text}\n\nEvidence:\n{evidence_digest}"}]
         

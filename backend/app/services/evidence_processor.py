@@ -190,7 +190,9 @@ class EvidenceProcessor:
                 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                 variance = cv2.Laplacian(gray, cv2.CV_64F).var()
                 if variance < 100:
-                    meta.object_labels.append("blurry")
+                    meta.object_labels.append("blurry_image")
+                else:
+                    meta.object_labels.append("sharp_high_clarity_image")
                 
                 # 2. Coarse Contextual Signals (Basic Color/Shape heuristics)
                 # Heuristic for "Cash" (Greenish/Yellowish shades)
@@ -203,8 +205,16 @@ class EvidenceProcessor:
                 _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
                 if np.sum(binary == 255) > (img.shape[0] * img.shape[1] * 0.4):
                     meta.object_labels.append("signal: possible_document_layout")
-        except Exception:
-            pass
+
+                # If no specific signals but sharp, mark as scene
+                if not any("signal:" in lab for lab in meta.object_labels):
+                    meta.object_labels.append("signal: general_scene_or_object")
+
+                logger.info("opencv_processing_complete", file=meta.file_name, signals=meta.object_labels)
+            else:
+                logger.warning("opencv_decode_failed", file=meta.file_name)
+        except Exception as e:
+            logger.warning("opencv_processing_failed", error=str(e), file=meta.file_name)
 
     @classmethod
     def _process_media_transcription(cls, content: bytes, file_type: EvidenceType, meta: EvidenceMetadata):

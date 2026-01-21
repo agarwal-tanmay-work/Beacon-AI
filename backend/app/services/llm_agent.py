@@ -185,6 +185,12 @@ class LLMAgent:
                         content = f.read()
 
             if content:
+                from app.services.ai_service import GroqService
+                if GroqService.VISION_MODEL == "none":
+                    # Fallback to a neutral acknowledgement if vision is disabled
+                    # This tells the user we've received it and are processing it with local tools (OpenCV/OCR)
+                    return "Image received. I've noted the visual evidence and will include it in the final report analysis."
+                
                 desc, _ = await GroqService.perform_forensic_visual_analysis(content, "image/jpeg", timeout=10.0)
                 return desc or "An image was uploaded but I couldn't process it clearly."
             return "An image file was detected."

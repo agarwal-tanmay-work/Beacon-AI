@@ -12,7 +12,7 @@ export default function ReportPage() {
     }, []);
 
     return (
-        <div className="w-full h-screen bg-black text-white relative flex flex-col items-center overflow-hidden font-sans selection:bg-blue-500/30">
+        <div className="w-full h-[100dvh] bg-black text-white relative flex flex-col items-center overflow-hidden font-sans selection:bg-blue-500/30">
             {/* Background Sparkles */}
             <div className="absolute inset-0 z-0">
                 <SparklesCore
@@ -37,14 +37,14 @@ export default function ReportPage() {
             </div>
 
 
-            <div className="relative z-10 w-full flex-1 flex flex-col items-center pt-6 pb-8 px-4 max-w-7xl mx-auto overflow-hidden">
+            <div className="relative z-10 w-full flex-1 flex flex-col items-center pt-2 md:pt-6 pb-2 md:pb-8 px-4 max-w-7xl mx-auto overflow-hidden">
                 {/* Header */}
-                <div className="text-center mb-2 space-y-2 shrink-0">
-                    <h1 className="text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60 drop-shadow-2xl">
+                <div className="text-center mb-2 space-y-1 md:space-y-2 shrink-0">
+                    <h1 className="text-2xl md:text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60 drop-shadow-2xl">
                         Submit Report
                     </h1>
-                    <div className="h-[2px] w-32 bg-gradient-to-r from-transparent via-blue-600 to-transparent mx-auto my-3 shadow-[0_0_15px_rgba(37,99,235,0.6)]" />
-                    <p className="text-blue-100/60 text-base font-normal tracking-wide">
+                    <div className="h-[1px] md:h-[2px] w-24 md:w-32 bg-gradient-to-r from-transparent via-blue-600 to-transparent mx-auto my-2 md:my-3 shadow-[0_0_15px_rgba(37,99,235,0.6)]" />
+                    <p className="text-blue-100/60 text-xs md:text-sm font-normal tracking-wide">
                         Document sensitive information securely and anonymously.
                     </p>
                 </div>
