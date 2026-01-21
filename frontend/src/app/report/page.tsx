@@ -12,7 +12,7 @@ export default function ReportPage() {
     }, []);
 
     return (
-        <div className="w-full h-[100dvh] bg-black text-white relative flex flex-col items-center overflow-hidden font-sans selection:bg-blue-500/30">
+        <div className="w-full h-screen bg-black text-white relative flex flex-col items-center overflow-hidden font-sans selection:bg-blue-500/30">
             {/* Background Sparkles */}
             <div className="absolute inset-0 z-0">
                 <SparklesCore

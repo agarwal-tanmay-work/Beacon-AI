@@ -45,6 +45,7 @@ async def track_case(
                 Beacon.status,
                 Beacon.reported_at,
                 Beacon.incident_summary,
+                Beacon.ai_summary,
                 Beacon.last_updated_at,
                 Beacon.last_framed_status
             )
@@ -118,7 +119,7 @@ async def track_case(
         return TrackStatusResponse(
             status=display_status,
             reported_at=case.reported_at,
-            incident_summary=case.incident_summary,
+            incident_summary=case.ai_summary or case.incident_summary,
             last_updated=case.last_updated_at,
             updates=[
                 PublicUpdate(

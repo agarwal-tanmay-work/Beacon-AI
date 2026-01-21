@@ -261,9 +261,9 @@ export function ChatInterface() {
     };
 
     return (
-        <div className="w-full max-w-6xl mx-auto flex flex-col h-[100dvh] md:h-full pt-2 md:pt-0 pb-2 md:pb-0">
+        <div className="w-full max-w-6xl mx-auto flex flex-col h-full md:h-full pt-4 md:pt-0 pb-4 md:pb-0">
             {/* Main Chat Card */}
-            <div className="w-full bg-black/40 backdrop-blur-3xl border border-white/10 rounded-t-[2rem] rounded-b-xl overflow-hidden flex flex-col h-full shadow-2xl relative">
+            <div className="w-full bg-black/40 backdrop-blur-3xl border border-white/10 rounded-t-[2rem] rounded-b-xl overflow-hidden flex flex-col h-full md:min-h-[500px] shadow-2xl relative">
 
                 {/* Header */}
                 <div className="flex items-center gap-3 px-4 md:px-6 py-4 border-b border-white/5 bg-white/5 backdrop-blur-md">
@@ -448,13 +448,16 @@ export function ChatInterface() {
                                 }
                             }}
                             placeholder="Describe the incident..."
-                            className="flex-1 bg-transparent border-none text-white placeholder-white/20 focus:outline-none focus:ring-0 text-[16px] px-2 font-light resize-none py-2 max-h-32 min-h-[44px] md:min-h-0 scrollbar-hide"
+                            className="flex-1 bg-transparent border-none text-white placeholder-white/20 focus:outline-none focus:ring-0 text-[16px] md:text-sm px-2 font-light resize-none py-2 max-h-32 min-h-[44px] md:min-h-0 scrollbar-hide"
                             disabled={isLocked || loading}
                             rows={1}
                             onFocus={(e) => {
-                                setTimeout(() => {
-                                    e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                }, 300);
+                                // Only scroll into view on mobile devices to satisfy the "no scroll/visibility" requirement
+                                if (window.innerWidth < 768) {
+                                    setTimeout(() => {
+                                        e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    }, 300);
+                                }
                             }}
                         />
 
