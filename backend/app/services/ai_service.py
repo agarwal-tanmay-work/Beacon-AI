@@ -275,17 +275,32 @@ Keep it neutral. Example: 'Uniformed officer standing on a road next to a vehicl
                 if ev.object_labels: digest_lines.append(f"  Visual: {', '.join(ev.object_labels)}")
             evidence_digest = "\n".join(digest_lines)
 
-        system_prompt = """You are Beacon Credibility Engine. Assess narrative vs evidence alignment.
-CORE PRINCIPLES: Credibility != Truth.
-SCORING: 1. Narrative (0-40), 2. Evidence Strength (0-40), 3. Behavioral Consistency (0-20).
+        system_prompt = """You are Beacon Credibility Engine. Your task is to perform a HIGHLY CRITICAL assessment of a corruption report by comparing the user's narrative with the provided evidence.
+
+CORE PRINCIPLES: 
+- Credibility != Truth. We assess if the report is internally consistent and externally supported.
+- BE SKEPTICAL. Do not give high scores by default.
+- If evidence is UNRELATED to the narrative context (e.g., a photo of a cat for a bribery report), the Evidence Strength subscore MUST be 0.
+
+SCORING CRITERIA (0-100 Total):
+1. Narrative Consistency (0-40): 
+   - Is the story detailed, logical, and free of contradictions? 
+   - Low detail = Low score.
+2. Evidence Strength (0-40): 
+   - Does the evidence DIRECTLY support the specific claims made?
+   - If evidence is provided but is completely irrelevant, generic, or corrupt, score 0.
+   - If NO evidence is provided, score 0.
+   - High clarity images/audio that clearly show/hear the reported actors/objects = High score.
+3. Behavioral Reliability (0-20): 
+   - Based on the interaction quality and responsiveness during the chat.
 
 EVIDENCE INTERPRETATION RULES:
-- If an image is 'sharp_high_clarity_image', it is NOT unclear. Do not use 'unclear' in your explanation for such files.
-- 'signal: general_scene_or_object' means a valid scene was captured.
-- If OCR is missing but the image is sharp, treat it as visual-only evidence (e.g., a photo of a location or person).
-- Focus on alignment: Does the presence of this evidence support the user's claim?
+- If an image is 'sharp_high_clarity_image', it is NOT unclear.
+- 'signal: general_scene_or_object' means a valid scene was captured - assess its relevance to the specific corruption context.
+- If OCR is missing but the image is sharp, treat it as visual-only evidence.
+- ABSOLUTE RELEVANCE: If evidence files are provided but do NOT match the context of the report (e.g., reporting a traffic bribe but uploading a screenshot of a grocery bill), you MUST penalize the score heavily.
 """
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Case:\n{conversation_text}\n\nEvidence:\n{evidence_digest}"}]
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Case Narrative:\n{conversation_text}\n\nEvidence Metadata & Extraction:\n{evidence_digest}"}]
         
         return await cls._call_groq(messages, ScoringResult, timeout=timeout)
 

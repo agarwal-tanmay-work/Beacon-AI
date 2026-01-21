@@ -329,9 +329,9 @@ export default function TrackPage() {
                                             Incident Summary
                                         </h2>
                                         <div className="w-full">
-                                            <p className="text-white/60 leading-relaxed font-light text-xl md:text-2xl max-w-4xl">
-                                                {result.incident_summary}
-                                            </p>
+                                            <div className="text-white/60 leading-relaxed font-light text-xl md:text-2xl max-w-4xl prose prose-invert prose-blue">
+                                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.incident_summary}</ReactMarkdown>
+                                            </div>
                                         </div>
                                     </div>
                                 )}
@@ -358,9 +358,9 @@ export default function TrackPage() {
                                                             Update {idx + 1} • {formatToIST(update.timestamp, { hour: undefined, minute: undefined })}
                                                         </p>
                                                     </div>
-                                                    <p className="text-white/80 leading-relaxed font-light text-xl md:text-2xl max-w-4xl border-l-2 border-blue-500/20 pl-8">
-                                                        {update.message}
-                                                    </p>
+                                                    <div className="text-white/80 leading-relaxed font-light text-xl md:text-2xl max-w-4xl border-l-2 border-blue-500/20 pl-8 prose prose-invert prose-blue">
+                                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{update.message}</ReactMarkdown>
+                                                    </div>
                                                 </motion.div>
                                             ))}
                                         </div>

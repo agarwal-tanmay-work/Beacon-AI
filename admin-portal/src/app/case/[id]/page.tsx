@@ -558,7 +558,9 @@ export default function CaseDetailPage() {
                                 {caseData.updates.map((update) => (
                                     <div key={update.id} className="relative pl-4 border-l border-white/10 pb-1">
                                         <div className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-primary ring-4 ring-background"></div>
-                                        <p className="text-sm text-white">{update.public_update}</p>
+                                        <div className="text-sm text-white prose prose-invert prose-sm max-w-none">
+                                            <ReactMarkdown>{update.public_update}</ReactMarkdown>
+                                        </div>
                                         <p className="text-xs text-muted-foreground mt-1">{formatToIST(update.created_at, { hour: undefined, minute: undefined })}</p>
                                     </div>
                                 ))}
