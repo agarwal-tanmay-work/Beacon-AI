@@ -254,7 +254,7 @@ export default function CaseDetailPage() {
                         ) : (
                             <button
                                 onClick={() => setIsEditingStatus(true)}
-                                className={clsx("flex items-center gap-2 px-3 py-1 rounded-full text-sm font-bold transition-all hover:ring-2 ring-white/20", getStatusColor(caseData.status))}
+                                className={cn("flex items-center gap-2 px-3 py-1 rounded-full text-sm font-bold transition-all hover:ring-2 ring-white/20", getStatusColor(caseData.status))}
                             >
                                 {caseData.status}
                                 <ChevronDown className="w-4 h-4 opacity-70" />
@@ -317,7 +317,11 @@ export default function CaseDetailPage() {
                             <FileText className="w-5 h-5 text-primary" /> Incident Summary
                         </h2>
                         <div className="prose prose-invert max-w-none text-sm leading-relaxed text-gray-300">
-                            {caseData.ai_summary || caseData.incident_summary || <span className="italic text-muted-foreground">Analysis pending or summary unavailable.</span>}
+                            {caseData.ai_summary || caseData.incident_summary ? (
+                                <ReactMarkdown>{caseData.ai_summary || caseData.incident_summary}</ReactMarkdown>
+                            ) : (
+                                <span className="italic text-muted-foreground">Analysis pending or summary unavailable.</span>
+                            )}
                         </div>
                     </div>
 
@@ -329,22 +333,15 @@ export default function CaseDetailPage() {
 
                         {caseData.ai_explanation && (
                             <div className="space-y-6 mb-6">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-                                        <div className="text-xs text-muted-foreground uppercase font-bold">Narrative Consistency</div>
-                                        <div className="text-lg font-bold text-primary">{caseData.ai_explanation.narrative_score}/40</div>
-                                    </div>
-                                    <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-                                        <div className="text-xs text-muted-foreground uppercase font-bold">Evidence Strength</div>
-                                        <div className="text-lg font-bold text-blue-500">{caseData.ai_explanation.evidence_score}/40</div>
-                                    </div>
-                                </div>
+                                {/* Scores section removed as per user request */}
 
                                 <div>
                                     <div className="text-sm font-bold text-white mb-2">Analysis Rationale</div>
                                     <ul className="list-disc pl-5 space-y-1">
                                         {caseData.ai_explanation.rationale.map((r, i) => (
-                                            <li key={i} className="text-sm text-gray-300">{r}</li>
+                                            <li key={i} className="text-sm text-gray-300">
+                                                <ReactMarkdown>{r}</ReactMarkdown>
+                                            </li>
                                         ))}
                                     </ul>
                                 </div>
@@ -364,8 +361,12 @@ export default function CaseDetailPage() {
                             </div>
                         )}
 
-                        <div className="text-sm text-gray-300 bg-white/5 p-4 rounded-lg border border-white/10">
-                            {caseData.app_score_explanation || "No explanation provided."}
+                        <div className="text-sm text-gray-300 bg-white/5 p-4 rounded-lg border border-white/10 prose prose-invert prose-sm max-w-none">
+                            {caseData.app_score_explanation ? (
+                                <ReactMarkdown>{caseData.app_score_explanation}</ReactMarkdown>
+                            ) : (
+                                "No explanation provided."
+                            )}
                         </div>
                     </div>
 

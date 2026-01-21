@@ -5,6 +5,8 @@ import { Home, ShieldCheck, Activity, Info } from "lucide-react";
 
 import { usePathname } from "next/navigation";
 
+import { cn } from "@/lib/utils";
+
 export function AppNavBar() {
     const pathname = usePathname();
 
@@ -16,6 +18,11 @@ export function AppNavBar() {
 
     // Align center on Home, Right on other pages
     const alignment = pathname === "/" ? "center" : "right";
+    const isHomePage = pathname === "/";
 
-    return <AnimeNavBar items={navItems} alignment={alignment} />;
+    return (
+        <div className={cn(!isHomePage && "hidden md:block")}>
+            <AnimeNavBar items={navItems} alignment={alignment} />
+        </div>
+    );
 }
