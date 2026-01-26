@@ -1,0 +1,31 @@
+============================================================
+CREDIBILITY SCORING TEST - Weak Evidence Scenarios
+============================================================
+
+[TEST 1] Vague narrative + NO evidence
+----------------------------------------
+  Total Score: 15%
+  Narrative: 5/40
+  Evidence: 0/40
+  Behavioral: 5/20
+  Γ£ô PASS
+
+[TEST 2] Some details + UNRELATED evidence (cat photo)
+----------------------------------------
+  Total Score: 15%
+  Narrative: 5/40
+  Evidence: 0/40
+  Behavioral: 10/20
+  Γ£ô PASS
+
+[TEST 3] Good narrative + CORRUPT evidence
+----------------------------------------
+  Total Score: 25%
+  Narrative: 15/40
+  Evidence: 0/40
+  Behavioral: 10/20
+  Γ£ô PASS
+
+============================================================
+TEST COMPLETE
+============================================================
