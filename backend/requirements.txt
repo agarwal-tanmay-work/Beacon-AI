@@ -19,5 +19,7 @@ numpy
 supabase
 pytesseract
 dnspython
+pytz
+termcolor
 
 
