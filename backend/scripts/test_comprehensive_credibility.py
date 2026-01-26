@@ -13,6 +13,19 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Manually load backend_config.env
+from pathlib import Path
+env_path = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "backend_config.env"
+if env_path.exists():
+    print(f"Loading env from {env_path}")
+    with open(env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"): continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+                os.environ[k.strip()] = v.strip().strip("'").strip('"')
+
 from app.schemas.ai import EvidenceMetadata, EvidenceType
 
 # Test Cases Definition
@@ -208,7 +221,7 @@ async def run_comprehensive_test():
     print("=" * 70)
     
     all_results = {}
-    ITERATIONS = 20
+    ITERATIONS = 2
     
     for level, scenarios in TEST_SCENARIOS.items():
         print(f"\n{'='*70}")

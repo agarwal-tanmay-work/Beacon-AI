@@ -22,7 +22,7 @@ class GroqService:
     # Updated Models (Jan 2026)
     # Downgraded for speed and rate-limit resilience
     TEXT_MODEL = "llama-3.1-8b-instant"
-    VISION_MODEL = "none" # Disabling cloud vision as requested
+    VISION_MODEL = "llama-3.2-11b-vision-preview" # Enabling cloud vision for evidence analysis
 
     _client: Optional[httpx.AsyncClient] = None
 
@@ -351,6 +351,12 @@ FINAL SCORE RANGES (0-100) & CONFIDENCE LEVEL
 │ 34 - 66        │ MEDIUM          │ Some credibility, partial proof │
 │ 67 - 100       │ HIGH            │ Strong details + solid evidence │
 └────────────────┴─────────────────┴─────────────────────────────────┘
+
+CRITICAL: 
+- You MUST use the 'Visual: ...' descriptions in the Evidence Metadata.
+- If the "Visual" description matches the "Narrative" (e.g., Narrative says 'officer', Visual says 'man in uniform'), GIVE HIGH EVIDENCE POINTS (20-30).
+- If the "Visual" description contradicts the Narrative, GIVE 0 POINTS.
+
 
 SET confidence_level based on the total credibility_score:
 - credibility_score 0-33  → confidence_level = "Low"
