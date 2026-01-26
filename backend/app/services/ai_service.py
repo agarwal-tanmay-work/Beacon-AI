@@ -10,6 +10,53 @@ import base64
 logger = structlog.get_logger()
 T = TypeVar("T", bound=BaseModel)
 
+class GeminiService:
+    """
+    Service for interacting with Google Gemini API.
+    Used for Vision fallback when Groq models are unavailable.
+    """
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+    @classmethod
+    async def analyze_image(cls, image_bytes: bytes, mime_type: str, prompt: str) -> Optional[str]:
+        if not settings.GEMINI_API_KEY:
+            logger.warning("gemini_api_key_missing")
+            return None
+
+        b64_image = base64.b64encode(image_bytes).decode('utf-8')
+        
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": b64_image
+                        }
+                    }
+                ]
+            }]
+        }
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{cls.BASE_URL}?key={settings.GEMINI_API_KEY}",
+                    json=payload,
+                    timeout=30.0
+                )
+                
+                if response.status_code != 200:
+                    logger.error("gemini_api_error", status=response.status_code, body=response.text)
+                    return None
+                
+                data = response.json()
+                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            except Exception as e:
+                logger.error("gemini_request_failed", error=str(e))
+                return None
+
 class GroqService:
     """
     Service for interacting with Groq Cloud API (Llama 3 models).
@@ -22,7 +69,7 @@ class GroqService:
     # Updated Models (Jan 2026)
     # Downgraded for speed and rate-limit resilience
     TEXT_MODEL = "llama-3.3-70b-versatile"
-    VISION_MODEL = "none" # Disabling cloud vision as requested/unavailable
+    VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct" 
 
     _client: Optional[httpx.AsyncClient] = None
 
@@ -124,10 +171,12 @@ class GroqService:
 
     @classmethod
     async def analyze_evidence(cls, file_bytes: bytes, mime_type: str) -> Dict[str, Any]:
-        # Legacy single-file analysis
+        """Layered analysis: Try Groq Vision first, then Gemini fallback."""
+        prompt = "Analyze this image. Describe visible text and objects."
+        
+        # 1. Try Groq (Llama 4 Scout)
         b64_image = base64.b64encode(file_bytes).decode('utf-8')
         image_url = f"data:{mime_type};base64,{b64_image}"
-        prompt = "Analyze this image. Describe visible text and objects."
         messages = [{
             "role": "user",
             "content": [
@@ -135,8 +184,16 @@ class GroqService:
                 {"type": "image_url", "image_url": {"url": image_url}}
             ]
         }]
+        
         result_text, _ = await cls._call_groq(messages, model=cls.VISION_MODEL)
-        return {"analysis": result_text if result_text else "Visual analysis unavailable (Rate Limited)"}
+        
+        if result_text:
+            return {"analysis": result_text}
+            
+        # 2. Fallback to Gemini
+        logger.info("groq_vision_failed_falling_back_to_gemini")
+        gemini_result = await GeminiService.analyze_image(file_bytes, mime_type, prompt)
+        return {"analysis": gemini_result if gemini_result else "Visual analysis unavailable"}
 
     @classmethod
     async def perform_forensic_ocr_analysis(cls, ocr_text: str, narrative_summary: str, timeout: Optional[float] = None) -> Tuple[Optional[Any], Optional[int]]:
@@ -207,16 +264,16 @@ ANALYZE FOR:
 
     @classmethod
     async def perform_forensic_visual_analysis(cls, image_bytes: bytes, mime_type: str, timeout: Optional[float] = None) -> Tuple[Optional[str], Optional[int]]:
-        if cls.VISION_MODEL == "none":
-            return None, None
-
-        b64_image = base64.b64encode(image_bytes).decode('utf-8')
-        image_url = f"data:{mime_type};base64,{b64_image}"
-        
+        """
+        Multimodal Analysis: Try Groq Llama 4 Scout, then Gemini 1.5/2.0 fallback.
+        """
         prompt = """Describe the scene in this image in ONE SHORT SENTENCE. 
-Focus on: Actors, Environment, Key objects. 
+Focus on: Actors (uniformed officials, citizens), Environment (Government office, road, checkpoint), and Key objects (Cash, Documents, Badges). 
 Keep it neutral. Example: 'Uniformed officer standing on a road next to a vehicle.'
 """
+        # 1. Try Groq
+        b64_image = base64.b64encode(image_bytes).decode('utf-8')
+        image_url = f"data:{mime_type};base64,{b64_image}"
         messages = [{
             "role": "user",
             "content": [
@@ -224,9 +281,14 @@ Keep it neutral. Example: 'Uniformed officer standing on a road next to a vehicl
                 {"type": "image_url", "image_url": {"url": image_url}}
             ]
         }]
-        
         result, retry_after = await cls._call_groq(messages, model=cls.VISION_MODEL, timeout=timeout)
-        return str(result).strip() if result else None, retry_after
+        
+        if result:
+            return str(result).strip(), None
+
+        # 2. Try Gemini
+        gemini_result = await GeminiService.analyze_image(image_bytes, mime_type, prompt)
+        return gemini_result, None
 
     @classmethod
     async def generate_pro_summary(cls, chat_history: List[Dict[str, str]], timeout: Optional[float] = None) -> Tuple[Optional[str], Optional[int]]:
