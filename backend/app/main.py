@@ -77,17 +77,39 @@ app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 # Health Check
+from fastapi import Response
+
+# Health Check
+@app.head("/health", tags=["system"])
+async def health_check_head():
+    """
+    Head request for UptimeRobot (returns 200 OK with no body).
+    """
+    try:
+        return Response(status_code=200)
+    except Exception as e:
+        logger.error("health_check_head_failed", error=str(e))
+        return Response(status_code=500)
+
 @app.get("/health", tags=["system"])
 async def health_check(request: Request):
     """
     Public health check endpoint.
-    Returns 503 if DB is not connected (but port is open).
+    Lightweight response for UptimeRobot.
     """
-    db_connected = getattr(app.state, "db_connected", False)
-    if not db_connected:
-        return JSONResponse(status_code=503, content={"status": "degraded", "environment": settings.ENVIRONMENT, "db": "disconnected"})
+    try:
+        # Check in-memory state only (no DB query)
+        db_connected = getattr(app.state, "db_connected", False)
         
-    return {"status": "ok", "environment": settings.ENVIRONMENT, "db": "connected"}
+        # Always return 200 OK for UptimeRobot, but include DB status for observability
+        return {
+            "status": "ok", 
+            "environment": settings.ENVIRONMENT,
+            "db": "connected" if db_connected else "disconnected"
+        }
+    except Exception as e:
+        logger.error("health_check_failed", error=str(e))
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
 
 
 from app.api.v1.public import reporting as public_reporting, evidence as public_evidence, tracking as public_tracking
