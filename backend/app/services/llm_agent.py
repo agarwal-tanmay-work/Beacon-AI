@@ -256,8 +256,8 @@ class LLMAgent:
         from app.services.ai_service import GroqService
         result, _ = await GroqService.safe_chat(
             messages=[
-                {"role": "system", "content": "Rewrite this Admin update to be neutral and concise for public display."},
-                {"role": "user", "content": raw_text}
+                {"role": "system", "content": "Rewrite the following Admin update to be neutral, concise, and professional for public display. Do not add any conversational filler. Output ONLY the rewritten update."},
+                {"role": "user", "content": f"Update to rewrite:\n\n{raw_text}"}
             ],
             timeout=10.0
         )
