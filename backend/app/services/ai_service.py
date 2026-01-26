@@ -21,7 +21,7 @@ class GroqService:
     
     # Updated Models (Jan 2026)
     # Downgraded for speed and rate-limit resilience
-    TEXT_MODEL = "llama-3.1-8b-instant"
+    TEXT_MODEL = "llama-3.3-70b-versatile"
     VISION_MODEL = "llama-3.2-11b-vision-preview" # Enabling cloud vision for evidence analysis
 
     _client: Optional[httpx.AsyncClient] = None
