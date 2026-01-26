@@ -22,7 +22,7 @@ class GroqService:
     # Updated Models (Jan 2026)
     # Downgraded for speed and rate-limit resilience
     TEXT_MODEL = "llama-3.3-70b-versatile"
-    VISION_MODEL = "llama-3.2-11b-vision-preview" # Enabling cloud vision for evidence analysis
+    VISION_MODEL = "none" # Disabling cloud vision as requested/unavailable
 
     _client: Optional[httpx.AsyncClient] = None
 
