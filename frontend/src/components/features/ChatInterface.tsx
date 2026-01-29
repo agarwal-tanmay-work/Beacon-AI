@@ -41,7 +41,7 @@ export function ChatInterface() {
             {
                 id: "initial-greeting",
                 sender: "SYSTEM",
-                content: "Hello. I am Beacon AI, your compassionate and anonymous assistant. I'm here to help you report corruption safely. Please know that your identity is fully protected, and I will guide you through this process one step at a time.\n\nHow can I assist you today?",
+                content: "Hello. I am Beacon AI, your compassionate and anonymous assistant. I'm here to help you report complaints safely. Please know that your identity is fully protected, and I will guide you through this process one step at a time.\n\nHow can I assist you today?",
                 timestamp: new Date().toISOString()
             }
         ]);

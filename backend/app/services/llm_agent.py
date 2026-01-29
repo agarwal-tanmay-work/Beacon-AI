@@ -85,12 +85,9 @@ When finishing (user says "no" to more details), you MUST finish with this EXACT
 Your Case ID is: CASE_ID_PLACEHOLDER
 Your Secret Key is: SECRET_KEY_PLACEHOLDER
 
-Please keep these safe to track your report. This information is **COMPLETELY PRIVATE**."
-
-Your Case ID is: CASE_ID_PLACEHOLDER
-Your Secret Key is: SECRET_KEY_PLACEHOLDER
 
 **IMPORTANT**: Please save both of these safely to track your case status. We will investigate and take appropriate action. You've done the right thing by speaking up." (Strictly use ONLY these placeholders: CASE_ID_PLACEHOLDER and SECRET_KEY_PLACEHOLDER. DO NOT provide examples like CASE_ID_1234 or SECRET_KEY_5678).
+
 
 ────────────────────────────────
 🧩 STRUCTURED DATA EXTRACTION (INTERNAL)
