@@ -267,6 +267,8 @@ class ReportEngine:
                             status="Received",
                             incident_summary=clean_summary,
                             evidence_files=evidence_files,
+                            credibility_score=None,
+                            credibility_breakdown=None,
                             analysis_status="pending"
                         )
                         supabase_session.add(new_case)

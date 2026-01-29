@@ -38,9 +38,9 @@ class Beacon(Base):
     incident_summary = Column(Text, nullable=True)
     ai_summary = Column(Text, nullable=True) # Unified field for AI generated summary
     ai_explanation = Column(JSON, nullable=True) # Full structured explanation
-    credibility_score = Column(Integer, nullable=True)  # 1-100
+    credibility_score = Column(Integer, nullable=True, default=None)  # 1-100
     score_explanation = Column(Text, nullable=True)     # Added to match DB
-    credibility_breakdown = Column(JSON, nullable=True) # Full 8-dimension breakdown
+    credibility_breakdown = Column(JSON, nullable=True, default=None) # Full 8-dimension breakdown
     admin_summary = Column(Text, nullable=True)     # Internal neutral justification
 
     # Secret Access & Status Tracking (New)
