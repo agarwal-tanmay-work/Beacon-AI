@@ -151,9 +151,29 @@ class LLMAgent:
         # 3. API CALL (UNIFIED STRATEGY)
         from app.services.ai_service import GeminiService
         try:
-            # GeminiService.safe_chat handles timeouts and 429 logging internally
-            # It returns (content, retry_after)
-            text_response, retry_after = await GeminiService.safe_chat(messages, model=LLMAgent.GEMINI_MODEL, timeout=10.0)
+            max_retries = 3
+            current_try = 0
+            text_response = None
+            retry_after = None
+            
+            while current_try < max_retries:
+                # GeminiService.safe_chat handles timeouts and 429 logging internally
+                # It returns (content, retry_after)
+                text_response, retry_after = await GeminiService.safe_chat(messages, model=LLMAgent.GEMINI_MODEL, timeout=10.0)
+                
+                if text_response:
+                    break
+                
+                if retry_after:
+                    print(f"[LLM_AGENT] Rate limit hit. Retry-After: {retry_after}s. Attempt {current_try+1}/{max_retries}", flush=True)
+                    if current_try < max_retries - 1:
+                        await asyncio.sleep(retry_after + 1)
+                else:
+                    # Generic error, retry briefly if not last attempt
+                    if current_try < max_retries - 1:
+                         await asyncio.sleep(1)
+                
+                current_try += 1
             
             if text_response:
                 print(f"[LLM_AGENT] Raw response length: {len(text_response)}", flush=True)
