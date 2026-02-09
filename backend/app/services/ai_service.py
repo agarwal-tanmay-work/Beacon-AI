@@ -19,9 +19,10 @@ class GeminiService:
     Using Gemini 2.5 Flash model.
     """
     
-    # Gemini 3 Pro model
-    TEXT_MODEL = "gemini-3-pro"
-    VISION_MODEL = "gemini-3-pro"  # Same model supports multimodal
+    
+    # Gemini 3 Flash model (Preview) - Lowest cost Gemini 3 option
+    TEXT_MODEL = "gemini-3-flash-preview"
+    VISION_MODEL = "gemini-3-flash-preview"  # Same model supports multimodal
     
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
     TIMEOUT = 30.0

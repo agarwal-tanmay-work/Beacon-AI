@@ -124,8 +124,8 @@ Format:
 class LLMAgent:
     """Gemini-powered LLM Agent."""
     
-    # Using Gemini 3 Pro model
-    GEMINI_MODEL = "gemini-3-pro"
+    # Using Gemini 3 Flash model (Preview)
+    GEMINI_MODEL = "gemini-3-flash-preview"
     
     @staticmethod
     async def chat(conversation_history: list, current_state: dict = None) -> Tuple[str, Optional[dict]]:
