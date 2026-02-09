@@ -88,37 +88,48 @@ class GeminiService:
 
         client = await cls.get_client()
         try:
-            # Retry loop for network errors (max 3 times)
-            import httpx
             import asyncio
             
             response = None
-            max_network_retries = 3
+            max_retries = 2  # Only 2 attempts total for speed
             
-            for attempt in range(max_network_retries):
+            for attempt in range(max_retries):
                 try:
                     response = await client.post(
                         url,
                         json=payload,
                         timeout=effective_timeout
                     )
-                    break # Success
+                    
+                    # Handle 429 (rate limit) and 503 (overloaded) with quick retry
+                    if response.status_code in (429, 503):
+                        retry_after = response.headers.get("Retry-After")
+                        # Quick retry: 1s first, 2s second - prioritize speed
+                        wait_seconds = min(int(retry_after) if retry_after and retry_after.isdigit() else (attempt + 1), 2)
+                        error_type = "gemini_rate_limit" if response.status_code == 429 else "gemini_overloaded"
+                        
+                        if attempt < max_retries - 1:
+                            logger.warning(f"{error_type}_retrying", status=response.status_code, retry_after=wait_seconds)
+                            await asyncio.sleep(wait_seconds)
+                            continue  # Retry once
+                        else:
+                            # Final attempt failed, return with retry hint
+                            logger.error(f"{error_type}_exhausted", status=response.status_code, retry_after=wait_seconds)
+                            return None, wait_seconds
+                    
+                    # Success - break out of retry loop
+                    break
+                    
                 except (httpx.NetworkError, httpx.TimeoutException) as e:
-                    if attempt == max_network_retries - 1:
+                    if attempt == max_retries - 1:
                         logger.error("gemini_network_error_final", error=repr(e))
                         return None, None
+                    # Quick retry for network errors
                     logger.warning(f"gemini_network_retry_{attempt+1}", error=str(e))
-                    await asyncio.sleep(1 * (attempt + 1))
+                    await asyncio.sleep(1)
             
             if not response:
                 return None, None
-
-            if response.status_code == 429 or response.status_code == 503:
-                retry_after = response.headers.get("Retry-After")
-                wait_seconds = int(retry_after) if retry_after and retry_after.isdigit() else 2
-                error_type = "gemini_rate_limit" if response.status_code == 429 else "gemini_overloaded"
-                logger.error(f"{error_type}_retrying", status=response.status_code, retry_after=wait_seconds)
-                return None, wait_seconds
             
             if response.status_code != 200:
                 logger.error("gemini_api_error", status=response.status_code, body=response.text[:500])
