@@ -90,7 +90,14 @@ When finishing (user says "no" to more details), you MUST finish with this EXACT
 "Thank you for your courage in reporting this.
 Your Case ID is: CASE_ID_PLACEHOLDER
 Your Secret Key is: SECRET_KEY_PLACEHOLDER
-
+[REPORT_ENGINE] STAGE 1: Store user message: 7266dce3-48a3-42e2-b9cb-4e12be206446
+Menu
+[LLM_AGENT] chat() called with 1 messages
+HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=AIzaSyCzSU3Ww-M50OeJeLteAmny1oq1__qs0ZQ "HTTP/1.1 429 Too Many Requests"
+{"status": 429, "retry_after": 1, "event": "gemini_rate_limit_retrying", "level": "warning", "timestamp": "2026-02-09T07:08:11.878787Z"}
+HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=AIzaSyCzSU3Ww-M50OeJeLteAmny1oq1__qs0ZQ "HTTP/1.1 429 Too Many Requests"
+{"status": 429, "retry_after": 2, "event": "gemini_rate_limit_exhausted", "level": "error", "timestamp": "2026-02-09T07:08:12.921002Z"}
+[LLM_AGENT] API still overloaded after all retries. Retry-After: 2s
 
 **IMPORTANT**: Please save both of these safely to track your case status. We will investigate and take appropriate action. You've done the right thing by speaking up." (Strictly use ONLY these placeholders: CASE_ID_PLACEHOLDER and SECRET_KEY_PLACEHOLDER. DO NOT provide examples like CASE_ID_1234 or SECRET_KEY_5678).
 
@@ -117,8 +124,8 @@ Format:
 class LLMAgent:
     """Gemini-powered LLM Agent."""
     
-    # Using Gemini 3.0 Flash model (Preview)
-    GEMINI_MODEL = "gemini-3-flash-preview"
+    # Using Gemini 3 Pro model
+    GEMINI_MODEL = "gemini-3-pro"
     
     @staticmethod
     async def chat(conversation_history: list, current_state: dict = None) -> Tuple[str, Optional[dict]]:
