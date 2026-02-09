@@ -279,11 +279,30 @@ class LLMAgent:
     @staticmethod
     async def rewrite_update(raw_text: str) -> str:
         from app.services.ai_service import GeminiService
-        result, _ = await GeminiService.safe_chat(
-            messages=[
-                {"role": "system", "content": "Rewrite the following Admin update to be neutral, concise, and professional for public display. Do not add any conversational filler. Output ONLY the rewritten update."},
-                {"role": "user", "content": f"Update to rewrite:\n\n{raw_text}"}
-            ],
-            timeout=10.0
-        )
-        return result.strip() if result else raw_text
+        import asyncio
+        
+        max_retries = 3
+        current_try = 0
+        
+        while current_try < max_retries:
+            result, retry_after = await GeminiService.safe_chat(
+                messages=[
+                    {"role": "system", "content": "Rewrite the following Admin update to be neutral, concise, and professional for public display. Do not add any conversational filler. Output ONLY the rewritten update."},
+                    {"role": "user", "content": f"Update to rewrite:\n\n{raw_text}"}
+                ],
+                timeout=30.0
+            )
+            
+            if result:
+                return result.strip()
+            
+            if retry_after:
+                print(f"[Rewrite] Rate limit hit. Retrying in {retry_after}s...", flush=True)
+                await asyncio.sleep(retry_after)
+            else:
+                # No result and no retry hint (e.g. error), maybe brief pause then retry or break
+                await asyncio.sleep(2)
+            
+            current_try += 1
+            
+        return raw_text
