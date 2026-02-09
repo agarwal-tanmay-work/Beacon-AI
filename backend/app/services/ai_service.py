@@ -2,6 +2,7 @@ import httpx
 import json
 import structlog
 import base64
+import traceback
 from typing import Optional, Dict, Any, Type, TypeVar, List, Tuple
 from pydantic import BaseModel
 from app.core.config import settings
@@ -102,7 +103,7 @@ class GeminiService:
                         timeout=effective_timeout
                     )
                     break # Success
-                except httpx.NetworkError as e:
+                except (httpx.NetworkError, httpx.TimeoutException) as e:
                     if attempt == max_network_retries - 1:
                         logger.error("gemini_network_error_final", error=repr(e))
                         return None, None
