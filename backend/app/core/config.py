@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: Union[str, None] = None
 
     # AI
-    GEMINI_API_KEY: str = ""
-    GROQ_API_KEY: str
+    GEMINI_API_KEY: str
+    GROQ_API_KEY: str = ""  # Deprecated - using Gemini instead
 
     # Logging
     LOG_LEVEL: str = "INFO"

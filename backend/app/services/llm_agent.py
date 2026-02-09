@@ -109,15 +109,15 @@ Format:
 """
 
 class LLMAgent:
-    """Groq-powered LLM Agent."""
+    """Gemini-powered LLM Agent."""
     
-    # Centralized in GroqService now, keeping for backward compatibility if needed locally
-    GROQ_MODEL = "llama-3.3-70b-versatile"
+    # Using Gemini 3.0 Flash model (Preview)
+    GEMINI_MODEL = "gemini-3-flash-preview"
     
     @staticmethod
     async def chat(conversation_history: list, current_state: dict = None) -> Tuple[str, Optional[dict]]:
         print(f"[LLM_AGENT] chat() called with {len(conversation_history)} messages", flush=True)
-        api_key = settings.GROQ_API_KEY
+        api_key = settings.GEMINI_API_KEY
         if not api_key:
             print(f"[LLM_AGENT] No API key found, using mock", flush=True)
             return await LLMAgent._mock_chat(conversation_history, current_state)
@@ -143,11 +143,11 @@ class LLMAgent:
              messages.append({"role": msg["role"].lower(), "content": msg["content"]})
             
         # 3. API CALL (UNIFIED STRATEGY)
-        from app.services.ai_service import GroqService
+        from app.services.ai_service import GeminiService
         try:
-            # GroqService.safe_chat handles timeouts and 429 logging internally
+            # GeminiService.safe_chat handles timeouts and 429 logging internally
             # It returns (content, retry_after)
-            text_response, retry_after = await GroqService.safe_chat(messages, model=LLMAgent.GROQ_MODEL, timeout=10.0)
+            text_response, retry_after = await GeminiService.safe_chat(messages, model=LLMAgent.GEMINI_MODEL, timeout=10.0)
             
             if text_response:
                 print(f"[LLM_AGENT] Raw response length: {len(text_response)}", flush=True)
@@ -189,7 +189,7 @@ class LLMAgent:
                 return f"I'm currently experiencing high traffic. Please try sending your message again in a few seconds.", state
 
             else:
-                print(f"[LLM_AGENT] Groq service returned no response and no retry hint.", flush=True)
+                print(f"[LLM_AGENT] Gemini service returned no response and no retry hint.", flush=True)
                 return await LLMAgent._mock_chat(conversation_history, current_state)
 
         except Exception as e:
@@ -204,7 +204,7 @@ class LLMAgent:
         print(f"[LLM_AGENT] analyze_image_fast: {file_path}", flush=True)
         try:
             from app.services.storage_service import StorageService
-            from app.services.ai_service import GroqService
+            from app.services.ai_service import GeminiService
 
             content = None
             if file_path.startswith("supastorage://"):
@@ -216,13 +216,7 @@ class LLMAgent:
                         content = f.read()
 
             if content:
-                from app.services.ai_service import GroqService
-                if GroqService.VISION_MODEL == "none":
-                    # Fallback to a neutral acknowledgement if vision is disabled
-                    # This tells the user we've received it and are processing it with local tools (OpenCV/OCR)
-                    return "Image received. I've noted the visual evidence and will include it in the final report analysis."
-                
-                desc, _ = await GroqService.perform_forensic_visual_analysis(content, "image/jpeg", timeout=10.0)
+                desc, _ = await GeminiService.perform_forensic_visual_analysis(content, "image/jpeg", timeout=10.0)
                 return desc or "An image was uploaded but I couldn't process it clearly."
             return "An image file was detected."
         except Exception as e:
@@ -284,8 +278,8 @@ class LLMAgent:
 
     @staticmethod
     async def rewrite_update(raw_text: str) -> str:
-        from app.services.ai_service import GroqService
-        result, _ = await GroqService.safe_chat(
+        from app.services.ai_service import GeminiService
+        result, _ = await GeminiService.safe_chat(
             messages=[
                 {"role": "system", "content": "Rewrite the following Admin update to be neutral, concise, and professional for public display. Do not add any conversational filler. Output ONLY the rewritten update."},
                 {"role": "user", "content": f"Update to rewrite:\n\n{raw_text}"}

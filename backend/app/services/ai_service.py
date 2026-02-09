@@ -1,76 +1,30 @@
 import httpx
 import json
 import structlog
+import base64
 from typing import Optional, Dict, Any, Type, TypeVar, List, Tuple
 from pydantic import BaseModel
 from app.core.config import settings
 from app.schemas.ai import AIAnalysisResult, EvidenceMetadata, ScoringResult
-import base64
 
 logger = structlog.get_logger()
 T = TypeVar("T", bound=BaseModel)
 
+
 class GeminiService:
     """
-    Service for interacting with Google Gemini API.
-    Used for Vision fallback when Groq models are unavailable.
-    """
-    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-
-    @classmethod
-    async def analyze_image(cls, image_bytes: bytes, mime_type: str, prompt: str) -> Optional[str]:
-        if not settings.GEMINI_API_KEY:
-            logger.warning("gemini_api_key_missing")
-            return None
-
-        b64_image = base64.b64encode(image_bytes).decode('utf-8')
-        
-        payload = {
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": mime_type,
-                            "data": b64_image
-                        }
-                    }
-                ]
-            }]
-        }
-
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    f"{cls.BASE_URL}?key={settings.GEMINI_API_KEY}",
-                    json=payload,
-                    timeout=30.0
-                )
-                
-                if response.status_code != 200:
-                    logger.error("gemini_api_error", status=response.status_code, body=response.text)
-                    return None
-                
-                data = response.json()
-                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            except Exception as e:
-                logger.error("gemini_request_failed", error=str(e))
-                return None
-
-class GroqService:
-    """
-    Service for interacting with Groq Cloud API (Llama 3 models).
-    Layer 2: Logic & Reasoning Engine.
+    Unified service for interacting with Google Gemini API.
+    Handles both text generation and vision/image analysis.
+    Using Gemini 2.5 Flash model.
     """
     
-    BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
-    TIMEOUT = 20.0 # Increased from 10.0 for better baseline resilience
+    # Gemini 3.0 Flash model (Preview)
+    TEXT_MODEL = "gemini-3-flash-preview"
+    VISION_MODEL = "gemini-3-flash-preview"  # Same model supports multimodal
     
-    # Updated Models (Jan 2026)
-    # Downgraded for speed and rate-limit resilience
-    TEXT_MODEL = "llama-3.3-70b-versatile"
-    VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct" 
-
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+    TIMEOUT = 30.0
+    
     _client: Optional[httpx.AsyncClient] = None
 
     @classmethod
@@ -86,114 +40,147 @@ class GroqService:
             cls._client = None
 
     @classmethod
-    async def _call_groq(cls, messages: List[Dict[str, Any]], schema_class: Optional[Type[T]] = None, model: str = TEXT_MODEL, timeout: Optional[float] = None) -> Tuple[Optional[T | str], Optional[int]]:
+    async def _call_gemini(
+        cls, 
+        contents: List[Dict[str, Any]], 
+        schema_class: Optional[Type[T]] = None, 
+        model: str = None,
+        timeout: Optional[float] = None,
+        system_instruction: Optional[str] = None
+    ) -> Tuple[Optional[T | str], Optional[int]]:
         """
+        Call Gemini API with the given contents.
         Returns: (result, retry_after_seconds)
         """
-        if not settings.GROQ_API_KEY:
-            logger.warning("groq_api_key_missing")
+        if not settings.GEMINI_API_KEY:
+            logger.warning("gemini_api_key_missing")
             return None, None
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {settings.GROQ_API_KEY}"
-        }
         
-        # JSON Schema Enforcement
-        if schema_class:
-            system_instruction = f"You must output STRICT VALID JSON matching this schema: {schema_class.model_json_schema()}"
-            messages.insert(0, {"role": "system", "content": system_instruction})
-            
+        model = model or cls.TEXT_MODEL
+        url = f"{cls.BASE_URL}/{model}:generateContent?key={settings.GEMINI_API_KEY}"
+        
+        # Build payload
         payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": 0.1, # Lower temperature for strict reasoning
-            "max_tokens": 2048,
+            "contents": contents,
+            "generationConfig": {
+                "temperature": 0.1,
+                "maxOutputTokens": 2048,
+            }
         }
         
+        # Add system instruction if provided
+        if system_instruction:
+            payload["systemInstruction"] = {
+                "parts": [{"text": system_instruction}]
+            }
+        
+        # JSON schema enforcement for structured output
         if schema_class:
-            payload["response_format"] = {"type": "json_object"}
+            schema_text = f"You must output STRICT VALID JSON matching this schema: {schema_class.model_json_schema()}"
+            if system_instruction:
+                payload["systemInstruction"]["parts"][0]["text"] = f"{system_instruction}\n\n{schema_text}"
+            else:
+                payload["systemInstruction"] = {"parts": [{"text": schema_text}]}
+            payload["generationConfig"]["responseMimeType"] = "application/json"
 
         effective_timeout = timeout if timeout is not None else cls.TIMEOUT
 
         client = await cls.get_client()
         try:
             response = await client.post(
-                    cls.BASE_URL, 
-                    headers=headers, 
-                    json=payload, 
-                    timeout=effective_timeout
-                )
-                
-            if response.status_code == 429:
+                url,
+                json=payload,
+                timeout=effective_timeout
+            )
+            
+            if response.status_code == 429 or response.status_code == 503:
                 retry_after = response.headers.get("Retry-After")
-                wait_seconds = int(retry_after) if retry_after and retry_after.isdigit() else 1
-                logger.error("groq_rate_limit_hit", status=429, retry_after=wait_seconds)
+                wait_seconds = int(retry_after) if retry_after and retry_after.isdigit() else 2
+                error_type = "gemini_rate_limit" if response.status_code == 429 else "gemini_overloaded"
+                logger.error(f"{error_type}_retrying", status=response.status_code, retry_after=wait_seconds)
                 return None, wait_seconds
-                
+            
             if response.status_code != 200:
-                logger.error("groq_api_error", status=response.status_code, body=response.text[:500])
+                logger.error("gemini_api_error", status=response.status_code, body=response.text[:500])
                 return None, None
-                
+            
             data = response.json()
-            content = data["choices"][0]["message"]["content"]
+            
+            # Extract content from Gemini response
+            try:
+                content = data["candidates"][0]["content"]["parts"][0]["text"]
+            except (KeyError, IndexError) as e:
+                logger.error("gemini_response_parse_error", error=str(e), data=data)
+                return None, None
             
             if schema_class:
                 try:
-                    return schema_class.model_validate_json(content), None
+                    # Clean up JSON if wrapped in markdown code blocks
+                    cleaned = content.strip()
+                    if cleaned.startswith("```json"):
+                        cleaned = cleaned[7:]
+                    if cleaned.startswith("```"):
+                        cleaned = cleaned[3:]
+                    if cleaned.endswith("```"):
+                        cleaned = cleaned[:-3]
+                    cleaned = cleaned.strip()
+                    return schema_class.model_validate_json(cleaned), None
                 except Exception as e:
-                    logger.error("groq_parse_error", error=str(e), content=content)
+                    logger.error("gemini_parse_error", error=str(e), content=content[:500])
                     return None, None
-                    
+            
             return content, None
 
         except Exception as e:
-            logger.error("groq_request_failed", error=str(e))
+            logger.error("gemini_request_failed", error=str(e))
             return None, None
 
     @classmethod
-    async def analyze_report(cls, report_text: str) -> Optional[AIAnalysisResult]:
-        messages = [{
-            "role": "user", 
-            "content": f"Analyze this report. Extract entities, language, and corruption type.\n\nReport: {report_text}"
+    async def analyze_image(cls, image_bytes: bytes, mime_type: str, prompt: str) -> Optional[str]:
+        """Analyze an image using Gemini's vision capabilities."""
+        if not settings.GEMINI_API_KEY:
+            logger.warning("gemini_api_key_missing")
+            return None
+
+        b64_image = base64.b64encode(image_bytes).decode('utf-8')
+        
+        contents = [{
+            "parts": [
+                {"text": prompt},
+                {
+                    "inlineData": {
+                        "mimeType": mime_type,
+                        "data": b64_image
+                    }
+                }
+            ]
         }]
-        result, _ = await cls._call_groq(messages, AIAnalysisResult)
+
+        result, _ = await cls._call_gemini(contents, model=cls.VISION_MODEL)
+        return str(result).strip() if result else None
+
+    @classmethod
+    async def analyze_report(cls, report_text: str) -> Optional[AIAnalysisResult]:
+        contents = [{
+            "parts": [{"text": f"Analyze this report. Extract entities, language, and corruption type.\n\nReport: {report_text}"}]
+        }]
+        result, _ = await cls._call_gemini(contents, AIAnalysisResult)
         return result
 
     @classmethod
     async def translate_to_english(cls, text: str) -> str:
-        messages = [{
-            "role": "user",
-            "content": f"Translate to English (return original if already English): {text}"
+        contents = [{
+            "parts": [{"text": f"Translate to English (return original if already English): {text}"}]
         }]
-        result, _ = await cls._call_groq(messages)
+        result, _ = await cls._call_gemini(contents)
         return str(result) if result else text
 
     @classmethod
     async def analyze_evidence(cls, file_bytes: bytes, mime_type: str) -> Dict[str, Any]:
-        """Layered analysis: Try Groq Vision first, then Gemini fallback."""
+        """Analyze image evidence using Gemini vision."""
         prompt = "Analyze this image. Describe visible text and objects."
-        
-        # 1. Try Groq (Llama 4 Scout)
-        b64_image = base64.b64encode(file_bytes).decode('utf-8')
-        image_url = f"data:{mime_type};base64,{b64_image}"
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": image_url}}
-            ]
-        }]
-        
-        result_text, _ = await cls._call_groq(messages, model=cls.VISION_MODEL)
-        
-        if result_text:
-            return {"analysis": result_text}
-            
-        # 2. Fallback to Gemini
-        logger.info("groq_vision_failed_falling_back_to_gemini")
-        gemini_result = await GeminiService.analyze_image(file_bytes, mime_type, prompt)
-        return {"analysis": gemini_result if gemini_result else "Visual analysis unavailable"}
+        result = await cls.analyze_image(file_bytes, mime_type, prompt)
+        return {"analysis": result if result else "Visual analysis unavailable"}
 
     @classmethod
     async def perform_forensic_ocr_analysis(cls, ocr_text: str, narrative_summary: str, timeout: Optional[float] = None) -> Tuple[Optional[Any], Optional[int]]:
@@ -206,7 +193,7 @@ You ONLY analyze the extracted text provided to you.
 Your task is to:
 - Assess the quality and usefulness of the OCR output
 - Identify objective, verifiable signals
-- Detect relevance to the user’s narrative
+- Detect relevance to the user's narrative
 - Avoid assumptions, interpretations, or legal conclusions
 
 --------------------------------------------------
@@ -228,11 +215,10 @@ FINAL SAFETY RULE:
 This analysis reflects OCR text characteristics only.
 It does not verify authenticity, truth, or legality of the content.
 """
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"--- USER NARRATIVE SUMMARY ---\n{narrative_summary}\n\n--- OCR EXTRACTED TEXT ---\n{ocr_text}"}
-        ]
-        return await cls._call_groq(messages, ForensicOCRAnalysis, timeout=timeout)
+        contents = [{
+            "parts": [{"text": f"--- USER NARRATIVE SUMMARY ---\n{narrative_summary}\n\n--- OCR EXTRACTED TEXT ---\n{ocr_text}"}]
+        }]
+        return await cls._call_gemini(contents, ForensicOCRAnalysis, timeout=timeout, system_instruction=system_prompt)
 
     @classmethod
     async def perform_forensic_audio_analysis(cls, transcript_text: str, narrative_summary: str, audio_metadata: dict = None, timeout: Optional[float] = None) -> Tuple[Optional[Any], Optional[int]]:
@@ -256,53 +242,54 @@ ANALYZE FOR:
 3. NARRATIVE ALIGNMENT
 4. AMBIGUITIES
 """
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"--- USER NARRATIVE SUMMARY ---\n{narrative_summary}\n\n{metadata_str}\n--- TRANSCRIPTION TEXT ---\n{transcript_text}"}
-        ]
-        return await cls._call_groq(messages, ForensicAudioAnalysis, timeout=timeout)
+        contents = [{
+            "parts": [{"text": f"--- USER NARRATIVE SUMMARY ---\n{narrative_summary}\n\n{metadata_str}\n--- TRANSCRIPTION TEXT ---\n{transcript_text}"}]
+        }]
+        return await cls._call_gemini(contents, ForensicAudioAnalysis, timeout=timeout, system_instruction=system_prompt)
 
     @classmethod
     async def perform_forensic_visual_analysis(cls, image_bytes: bytes, mime_type: str, timeout: Optional[float] = None) -> Tuple[Optional[str], Optional[int]]:
         """
-        Multimodal Analysis: Try Groq Llama 4 Scout, then Gemini 1.5/2.0 fallback.
+        Multimodal visual analysis using Gemini.
         """
         prompt = """Describe the scene in this image in ONE SHORT SENTENCE. 
 Focus on: Actors (uniformed officials, citizens), Environment (Government office, road, checkpoint), and Key objects (Cash, Documents, Badges). 
 Keep it neutral. Example: 'Uniformed officer standing on a road next to a vehicle.'
 """
-        # 1. Try Groq
         b64_image = base64.b64encode(image_bytes).decode('utf-8')
-        image_url = f"data:{mime_type};base64,{b64_image}"
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": image_url}}
+        
+        contents = [{
+            "parts": [
+                {"text": prompt},
+                {
+                    "inlineData": {
+                        "mimeType": mime_type,
+                        "data": b64_image
+                    }
+                }
             ]
         }]
-        result, retry_after = await cls._call_groq(messages, model=cls.VISION_MODEL, timeout=timeout)
+        
+        result, retry_after = await cls._call_gemini(contents, model=cls.VISION_MODEL, timeout=timeout)
         
         if result:
             return str(result).strip(), None
-
-        # 2. Try Gemini
-        gemini_result = await GeminiService.analyze_image(image_bytes, mime_type, prompt)
-        return gemini_result, None
+        return None, retry_after
 
     @classmethod
     async def generate_pro_summary(cls, chat_history: List[Dict[str, str]], timeout: Optional[float] = None) -> Tuple[Optional[str], Optional[int]]:
         conversation_text = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in chat_history])
-        messages = [{
-            "role": "user",
-            "content": (
-                "Write a professional intelligence summary of this report in a SINGLE CONCISE PARAGRAPH. "
-                "Preserve details (dates, names, amounts). Anonymize the reporter. "
-                "No fluff. Just the facts. Start directly with the summary content.\n\n"
-                f"Log:\n{conversation_text}"
-            )
+        contents = [{
+            "parts": [{
+                "text": (
+                    "Write a professional intelligence summary of this report in a SINGLE CONCISE PARAGRAPH. "
+                    "Preserve details (dates, names, amounts). Anonymize the reporter. "
+                    "No fluff. Just the facts. Start directly with the summary content.\n\n"
+                    f"Log:\n{conversation_text}"
+                )
+            }]
         }]
-        result, retry_after = await cls._call_groq(messages, timeout=timeout)
+        result, retry_after = await cls._call_gemini(contents, timeout=timeout)
         if not result:
             return None, retry_after
             
@@ -425,11 +412,72 @@ SET confidence_level based on the total credibility_score:
 - credibility_score 34-66 → confidence_level = "Medium"  
 - credibility_score 67-100 → confidence_level = "High"
 """
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Case Narrative:\n{conversation_text}\n\nEvidence Metadata & Extraction:\n{evidence_digest}"}]
+        contents = [{
+            "parts": [{"text": f"Case Narrative:\n{conversation_text}\n\nEvidence Metadata & Extraction:\n{evidence_digest}"}]
+        }]
         
-        return await cls._call_groq(messages, ScoringResult, timeout=timeout)
+        return await cls._call_gemini(contents, ScoringResult, timeout=timeout, system_instruction=system_prompt)
 
     @classmethod
-    async def safe_chat(cls, messages: List[Dict[str, Any]], model: str = TEXT_MODEL, timeout: float = 10.0) -> Tuple[Optional[str], Optional[int]]:
-        """Unified chat helper."""
-        return await cls._call_groq(messages, model=model, timeout=timeout)
+    async def safe_chat(cls, messages: List[Dict[str, Any]], model: str = None, timeout: float = 10.0) -> Tuple[Optional[str], Optional[int]]:
+        """Unified chat helper - converts OpenAI-style messages to Gemini format."""
+        # Extract system message if present
+        system_instruction = None
+        user_messages = []
+        
+        for msg in messages:
+            role = msg.get("role", "user").lower()
+            content = msg.get("content", "")
+            
+            if role == "system":
+                system_instruction = content
+            else:
+                # Convert to Gemini format
+                # Map 'assistant' to 'model' for Gemini
+                gemini_role = "model" if role == "assistant" else "user"
+                user_messages.append({
+                    "role": gemini_role,
+                    "parts": [{"text": content}]
+                })
+        
+        # Ensure we have valid contents
+        if not user_messages:
+            return None, None
+        
+        return await cls._call_gemini(
+            user_messages, 
+            model=model or cls.TEXT_MODEL, 
+            timeout=timeout,
+            system_instruction=system_instruction
+        )
+
+    @classmethod
+    async def transcribe_audio(cls, audio_bytes: bytes, mime_type: str, timeout: Optional[float] = None) -> Optional[str]:
+        """
+        Transcribe audio using Gemini's multimodal capabilities.
+        Gemini 2.5 Flash supports audio input natively.
+        """
+        if not settings.GEMINI_API_KEY:
+            logger.warning("gemini_api_key_missing")
+            return None
+
+        b64_audio = base64.b64encode(audio_bytes).decode('utf-8')
+        
+        contents = [{
+            "parts": [
+                {"text": "Transcribe the following audio. Output ONLY the transcribed text, nothing else."},
+                {
+                    "inlineData": {
+                        "mimeType": mime_type,
+                        "data": b64_audio
+                    }
+                }
+            ]
+        }]
+
+        result, _ = await cls._call_gemini(contents, model=cls.VISION_MODEL, timeout=timeout or 60.0)
+        return str(result).strip() if result else None
+
+
+# Backward compatibility alias
+GroqService = GeminiService

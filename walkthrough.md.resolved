@@ -1,0 +1,678 @@
+# Beacon AI: Complete System Deep Dive
+
+> **A Comprehensive Architectural Walkthrough for Pitch Preparation**  
+> This document provides a full technical and product explanation of the Beacon AI system, designed for judges, government officials, and NGOs.
+
+---
+
+## Table of Contents
+
+1. [What Beacon AI Is](#what-beacon-ai-is)
+2. [Why It Exists](#why-it-exists)
+3. [Who Uses It](#who-uses-it)
+4. [When It Is Used](#when-it-is-used)
+5. [Where It Is Deployed](#where-it-is-deployed)
+6. [How It Works](#how-it-works)
+7. [Technical Deep Dive](#technical-deep-dive)
+8. [AI Usage and Limitations](#ai-usage-and-limitations)
+9. [Security and Privacy Model](#security-and-privacy-model)
+10. [Frequently Asked Questions](#frequently-asked-questions)
+11. [Pitch-Ready Summary](#pitch-ready-summary)
+
+---
+
+## What Beacon AI Is
+
+**Beacon AI is an anonymous complaint and incident reporting platform designed for government bodies, NGOs, and organizations handling sensitive case intake.**
+
+### The Core Problem It Solves
+
+Traditional corruption and complaint reporting systems suffer from:
+- **Fear of exposure** — people don't report because they fear retaliation
+- **Bureaucratic friction** — forms are complex, intimidating, and impersonal
+- **Spam and false reports** — organizations are overwhelmed with low-quality submissions
+- **No feedback loop** — reporters never know if their report was received or acted upon
+
+### What Beacon AI Is NOT
+
+> [!IMPORTANT]
+> **Beacon AI is NOT an AI decision-maker.** AI does not determine guilt, take enforcement action, or replace human judgment. AI is used only as an assistive layer for:
+> - Guiding the reporting conversation
+> - Summarizing reports for administrators
+> - Scoring reports to help prioritize workloads
+>
+> **All decisions are made by human administrators.**
+
+### In Simple Terms
+
+Beacon AI is like a **secure, anonymous, AI-guided helpdesk** for sensitive complaints. A citizen can walk up, report something serious, and walk away with a secret ticket number — no name, no login, no trace. On the other side, trusted administrators see incoming reports with AI-generated summaries and credibility indicators to help them prioritize their work.
+
+---
+
+## Why It Exists
+
+### The Design Philosophy
+
+Every design choice in Beacon AI stems from two principles:
+
+1. **The reporter's safety comes first** — No identity storage, no login walls, no profiling
+2. **Administrators need actionable intelligence** — AI-assisted filtering to distinguish genuine reports from spam
+
+### Key Design Decisions Explained
+
+#### Why No Login for Users?
+
+```
+Traditional System:          Beacon AI:
+┌─────────────────────┐      ┌─────────────────────┐
+│ Create Account      │      │ Start Talking       │
+│ Verify Email        │      │ (No account needed) │
+│ Remember Password   │      │                     │
+│ Login Each Time     │      │                     │
+│ Identity Stored     │      │ Identity NEVER      │
+│                     │      │ Stored              │
+└─────────────────────┘      └─────────────────────┘
+```
+
+A login creates a trail. Beacon AI eliminates this entirely. The moment a user closes their browser, there is no way to trace the report back to them.
+
+#### Why Case ID + Secret Key?
+
+After submitting a report, users receive:
+- **Case ID** (e.g., `BCN202601300001`) — A public identifier for the case
+- **Secret Key** (e.g., `XKWQ-7M2P`) — A private key known only to the reporter
+
+**Both are required to access the case.** This is like a safety deposit box — the bank (admin) can see the box exists, but only the key holder can prove ownership. This design enables:
+
+- **Tracking status** without logging in
+- **Two-way communication** without revealing identity
+- **Proof of submission** without identity storage
+
+#### Why Two-Way Communication Without Identity?
+
+Many reporting systems are one-way. Beacon AI allows the administrator to ask follow-up questions and the reporter to respond — all without either party knowing who the other is beyond their role.
+
+```mermaid
+sequenceDiagram
+    participant R as Reporter (Anonymous)
+    participant B as Beacon AI System
+    participant A as Admin
+
+    R->>B: Submits Report
+    B->>A: Case appears in Admin Portal
+    A->>B: Posts Update / Question
+    B->>R: Update visible via Track Page
+    R->>B: Sends response
+    B->>A: Response visible in Admin Portal
+```
+
+#### Why Credibility Scoring?
+
+Administrators can receive hundreds of reports. Credibility scoring helps them:
+- **Prioritize genuine reports** with detailed information and evidence
+- **Filter out spam** or low-effort submissions
+- **Allocate resources** to cases that warrant investigation
+
+> [!NOTE]
+> The credibility score is **not a verdict**. A score of 30% does not mean "this report is false." It means "this report lacks specific details or supporting evidence." The AI explains its reasoning transparently.
+
+#### Why Do Humans Remain in Control?
+
+AI is powerful but fallible. Beacon AI uses AI as a **co-pilot**, not an **autopilot**:
+
+| AI Does                                      | AI Does NOT Do                          |
+|----------------------------------------------|-----------------------------------------|
+| Guides the user through structured questions | Decide if a report is true              |
+| Summarizes the conversation                  | Recommend legal action                  |
+| Scores credibility based on detail           | Identify or profile the reporter        |
+| Analyzes evidence (OCR, visual context)      | Make any enforcement decision           |
+
+---
+
+## Who Uses It
+
+### The Actors
+
+#### 1. Citizen / Reporter
+
+**Who they are:** Anyone with a complaint to file — employees, whistleblowers, victims, witnesses
+
+**What they CAN do:**
+- Start a reporting session anonymously (no login)
+- Chat with Beacon AI to describe the incident
+- Upload evidence (images, audio, video, documents)
+- Receive a Case ID + Secret Key upon submission
+- Track their case status using these credentials
+- Send follow-up messages to the admin
+
+**What they CANNOT do:**
+- See other reports
+- Access the admin portal
+- Modify their report after submission
+- Reveal their identity (system does not store it)
+
+**How anonymity is enforced at code level:**
+- No `user_id` or `email` field exists in any database table
+- No login mechanism in the public frontend
+- Session tokens are random and not tied to identity
+- PII (emails, phones) is redacted from chat display
+
+---
+
+#### 2. Admin / NGO Authority
+
+**Who they are:** Authorized personnel who review submitted reports — case officers, investigators, compliance teams
+
+**What they CAN do:**
+- Log in to the Admin Portal with credentials
+- View all submitted cases
+- See AI-generated summaries and credibility scores
+- View uploaded evidence
+- Update case status (Pending → Ongoing → Completed)
+- Publish updates visible to the reporter
+- Send messages to the anonymous reporter
+
+**What they CANNOT do:**
+- See the reporter's identity (it was never captured)
+- Reverse-engineer who submitted a report
+- Access raw AI model internals
+
+**How admin isolation is enforced:**
+- Admin routes require JWT authentication (`/api/v1/admin/*`)
+- Admin credentials are hashed with `bcrypt` or `pbkdf2_sha256`
+- JWT tokens expire after 60 minutes
+
+---
+
+## When It Is Used
+
+### The Complete Lifecycle of a Report
+
+```mermaid
+flowchart TD
+    subgraph Reporter["📱 Reporter (Anonymous)"]
+        A[Opens Beacon AI]
+        B[Starts Chat Session]
+        C[Answers Questions]
+        D[Uploads Evidence]
+        E[Completes Report]
+        F[Receives Case ID + Secret Key]
+        G[Tracks Status via /track]
+        H[Sends Follow-up Messages]
+    end
+
+    subgraph System["⚙️ Beacon AI Backend"]
+        I[Session Created in Supabase]
+        J[Messages Stored]
+        K[Evidence Uploaded to Supabase Storage]
+        L[Case Finalized to Beacon Table]
+        M["Background Scoring Task Triggered"]
+        N[AI generates Summary + Score]
+    end
+
+    subgraph Admin["🖥️ Admin Portal"]
+        O[Admin Logs In]
+        P[Views Case List]
+        Q[Opens Case Detail]
+        R[Reviews Evidence + AI Summary]
+        S[Updates Status]
+        T[Publishes Update for Reporter]
+        U[Sends Message to Reporter]
+    end
+
+    A --> B --> C --> D --> E --> F
+    B --> I
+    C --> J
+    D --> K
+    E --> L --> M --> N
+    F --> G --> H
+
+    O --> P --> Q --> R --> S
+    S --> T
+    Q --> U
+```
+
+### Step-by-Step Timeline
+
+| When | What Happens | Database Action |
+|------|--------------|-----------------|
+| User opens chat | New session created | [reports](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/api/v1/admin/reports.py#69-123) row inserted (Supabase) |
+| User sends message | LLM responds, extracts data | `report_conversations` row appended |
+| User uploads file | File stored, metadata linked | [evidence](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/services/ai_service.py#172-197) row inserted + Supabase Storage |
+| User confirms submission | Case ID generated | `beacon` row inserted (final case record) |
+| Background task runs | AI summarizes + scores | `beacon` row updated with `ai_summary`, [credibility_score](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/models/beacon.py#80-86) |
+| Reporter tracks case | Case data fetched | `beacon` + `beacon_update` queried |
+| Admin views case | All data displayed | `beacon` + `beacon_message` queried |
+| Admin publishes update | LLM rewrites for public display | `beacon_update` row inserted |
+| Two-way message sent | Message stored | `beacon_message` row inserted |
+
+---
+
+## Where It Is Deployed
+
+### System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              DEPLOYMENT                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐     │
+│  │   Frontend      │    │   Admin Portal  │    │    Backend      │     │
+│  │   (Next.js)     │    │   (Next.js)     │    │   (FastAPI)     │     │
+│  │                 │    │                 │    │                 │     │
+│  │  Render/Vercel  │    │  Render/Vercel  │    │     Render      │     │
+│  └────────┬────────┘    └────────┬────────┘    └────────┬────────┘     │
+│           │                      │                      │               │
+│           │         ┌────────────┴──────────────────────┤               │
+│           │         │         API Calls                  │               │
+│           ▼         ▼                                    ▼               │
+│  ┌───────────────────────────────────────────────────────────────┐     │
+│  │                        Supabase                                │     │
+│  │  ┌─────────────────┐  ┌─────────────────┐                     │     │
+│  │  │   PostgreSQL    │  │   Storage       │                     │     │
+│  │  │   Database      │  │   (Evidence)    │                     │     │
+│  │  └─────────────────┘  └─────────────────┘                     │     │
+│  └───────────────────────────────────────────────────────────────┘     │
+│                                                                          │
+│  ┌───────────────────────────────────────────────────────────────┐     │
+│  │                       External AI APIs                         │     │
+│  │  ┌─────────────────┐  ┌─────────────────┐                     │     │
+│  │  │   Groq Cloud    │  │   Gemini        │                     │     │
+│  │  │   (LLM + Vision)│  │   (Vision       │                     │     │
+│  │  │                 │  │    Fallback)    │                     │     │
+│  │  └─────────────────┘  └─────────────────┘                     │     │
+│  └───────────────────────────────────────────────────────────────┘     │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Infrastructure Components
+
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| Frontend | Next.js 15 (React) | Public chat interface for reporters |
+| Admin Portal | Next.js 15 (React) | Authenticated dashboard for case management |
+| Backend | FastAPI (Python 3.11+) | Async API server handling all logic |
+| Database | Supabase (PostgreSQL) | Cloud database for all structured data |
+| File Storage | Supabase Storage | Cloud storage for evidence files |
+| AI - Text | Groq Cloud (Llama 3.3 70B) | Chat responses, summarization, scoring |
+| AI - Vision | Groq (Llama 4 Scout) + Gemini 2.0 | Image analysis |
+| AI - Audio | Groq Whisper (Large v3) | Audio transcription |
+| OCR | Tesseract (Local) | Text extraction from images |
+
+---
+
+## How It Works
+
+### Technical Deep Dive
+
+#### Backend Architecture
+
+The backend is a **FastAPI application** with fully **async architecture**:
+
+```python
+# Main entry point: backend/app/main.py
+app = FastAPI(
+    title="Beacon AI",
+    version="5.0.0",
+    description="Admin-grade Anti-Corruption Reporting System",
+    lifespan=lifespan,  # Handles startup/shutdown
+)
+```
+
+**Key Design Patterns:**
+- **Lifespan management** — Database initialized on startup, cleaned on shutdown
+- **Async everywhere** — All DB calls use `async/await` via SQLAlchemy 2.0
+- **Dependency injection** — Database sessions are injected via FastAPI `Depends()`
+- **Background tasks** — Post-submission AI analysis runs asynchronously
+
+---
+
+#### API Versioning and Route Structure
+
+All APIs are versioned under `/api/v1/`:
+
+```
+/api/v1/
+├── public/                  # No authentication required
+│   ├── reports/
+│   │   ├── create           # Start a new session
+│   │   └── message          # Send a chat message
+│   ├── evidence/
+│   │   └── upload           # Upload files
+│   └── track                # Track case status
+│       ├── POST /track      # Verify Case ID + Secret Key
+│       ├── POST /track/message  # Send follow-up message
+│       └── POST /track/upload   # Upload attachment
+│
+├── admin/                   # JWT authentication required
+│   ├── auth/login           # Admin login
+│   └── reports/
+│       ├── GET /            # List all cases
+│       ├── GET /{id}        # Get case detail
+│       ├── PUT /{id}/status # Update status
+│       ├── POST /{id}/update  # Publish update
+│       ├── POST /{id}/message # Send message
+│       ├── POST /{id}/upload  # Upload attachment
+│       └── POST /{id}/analyze # Re-trigger scoring
+```
+
+---
+
+#### Database Schema (Core Tables)
+
+| Table | Purpose | Key Fields |
+|-------|---------|------------|
+| [reports](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/api/v1/admin/reports.py#69-123) | Active chat sessions (staging) | [id](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/models/report.py#93-117), `access_token_hash`, [status](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/services/report_engine.py#394-414), [case_id](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/models/beacon.py#70-79) |
+| `report_conversations` | Chat message history | `report_id`, `sender`, `content_redacted` |
+| `report_state_tracking` | LLM context state | `report_id`, `context_data` (JSON) |
+| [evidence](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/services/ai_service.py#172-197) | Uploaded file metadata | `report_id`, `file_path`, `mime_type`, `file_hash` |
+| `beacon` | **Final case records** | [case_id](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/models/beacon.py#70-79), `secret_key_hash`, [credibility_score](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/models/beacon.py#80-86), `ai_summary` |
+| `beacon_update` | Admin status updates | [case_id](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/models/beacon.py#70-79), `public_update`, `created_at` |
+| `beacon_message` | Two-way communication | [case_id](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/models/beacon.py#70-79), `sender_role`, `content`, `attachments` |
+
+---
+
+#### How Anonymity Is Preserved
+
+1. **No user ID exists** — The [reports](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/api/v1/admin/reports.py#69-123) and `beacon` tables have no `user_id` field
+2. **Session token is random** — Generated as `tk_{random_hex}`
+3. **Token is hashed** — Only the hash is stored: `access_token_hash = sha256(token)`
+4. **Secret key is hashed** — Stored as `secret_key_hash = pbkdf2(secret_key)`
+5. **PII is redacted** — Frontend sanitizes emails/phones before display
+
+---
+
+#### How Chat Messages Are Processed
+
+```mermaid
+sequenceDiagram
+    participant FE as Frontend
+    participant API as /api/v1/public/reports/message
+    participant RE as ReportEngine
+    participant LLM as LLMAgent (Groq)
+    participant DB as Supabase
+
+    FE->>API: POST message (report_id, access_token, content)
+    API->>RE: process_message()
+    RE->>DB: Store user message
+    RE->>DB: Fetch conversation history
+    RE->>DB: Fetch evidence metadata
+    opt New evidence uploaded
+        RE->>LLM: analyze_image_fast() / analyze_audio_fast()
+    end
+    RE->>LLM: chat(conversation_history, state)
+    LLM-->>RE: Response + extracted_data (JSON)
+    RE->>DB: Store system response
+    alt Report complete (placeholders detected)
+        RE->>DB: Generate Case ID + Secret Key
+        RE->>DB: INSERT into beacon table
+        RE-->>API: Return case_id + secret_key
+    end
+    API-->>FE: Response with next_step
+```
+
+---
+
+#### How Evidence Uploads Work
+
+1. **Frontend** uploads file via `multipart/form-data`
+2. **Backend** receives file, uploads to Supabase Storage
+3. **File path** stored as `supastorage://evidence/{year}/{month}/{uuid}_{filename}`
+4. **Metadata** inserted into [evidence](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/services/ai_service.py#172-197) table
+5. **On finalization**, evidence metadata synced to `beacon.evidence_files` (JSON)
+
+---
+
+#### How Background Scoring Works
+
+After a case is finalized, a background task is triggered:
+
+```mermaid
+flowchart LR
+    A[Case Finalized] --> B[Background Task Triggered]
+    B --> C[Fetch Chat History]
+    B --> D[Fetch Evidence Files]
+    D --> E[Run EvidenceProcessor]
+    E --> E1[OCR on Images]
+    E --> E2[Transcription on Audio]
+    E --> E3[Visual Analysis]
+    C --> F[Generate AI Summary]
+    E --> G[Calculate Credibility Score]
+    F --> H[Update Beacon Row]
+    G --> H
+```
+
+**ScoringService** ([scoring_service.py](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/services/scoring_service.py)) orchestrates this with:
+- **Global lock** to prevent parallel Groq API spikes
+- **Aggressive retry** with exponential backoff (5s, 15s, 30s, 60s, 120s, 180s)
+- **Graceful error handling** — Cases marked `analysis_status = "failed"` with error logged
+
+---
+
+## AI Usage and Limitations
+
+### Where AI IS Used
+
+| Feature | AI Model | Purpose |
+|---------|----------|---------|
+| Chat Guidance | Llama 3.3 70B (Groq) | Ask structured questions, extract key facts |
+| Case Summary | Llama 3.3 70B (Groq) | Generate professional intelligence summary |
+| Credibility Scoring | Llama 3.3 70B (Groq) | Analyze narrative + evidence quality |
+| Image Analysis | Llama 4 Scout (Groq) + Gemini 2.0 | Describe visual context |
+| OCR Text Analysis | Llama 3.3 70B (Groq) | Analyze extracted text |
+| Audio Transcription | Whisper Large v3 (Groq) | Convert speech to text |
+| Update Rewriting | Llama 3.3 70B (Groq) | Reframe admin updates for public display |
+
+### Where AI is NOT Used
+
+> [!CAUTION]
+> AI does NOT:
+> - Determine truth or falsity of a report
+> - Recommend legal action or escalation
+> - Match reporters to profiles
+> - Make any automated enforcement decisions
+
+### Credibility Scoring Explained
+
+The credibility score is **0-100** based on three components:
+
+| Component | Weight | What It Measures |
+|-----------|--------|------------------|
+| Narrative Consistency | 0-40 | Specificity of WHO/WHAT/WHERE/WHEN |
+| Evidence Strength | 0-40 | Quality and relevance of uploaded files |
+| Behavioral Reliability | 0-20 | Cooperativeness during conversation |
+
+**Scoring Rules (from [ai_service.py](file:///c:/Users/priya/OneDrive/Desktop/Corrupt%20sredibilty%20updated/coorupt/backend/app/services/ai_service.py)):**
+- **No evidence = Evidence score 0**
+- **Unrelated evidence = Evidence score 0**
+- **Vague story = Narrative score max 15**
+- **Score 60+ requires strong details + relevant evidence**
+
+### Fallback Behavior
+
+| Scenario | Behavior |
+|----------|----------|
+| Groq API rate limit (429) | Retry with exponential backoff; return friendly message |
+| Groq API timeout | Fall back to mock response asking user to try again |
+| Vision model fails | Fall back to Gemini 2.0 |
+| All retries exhausted | Mark `analysis_status = "failed"` with error logged |
+
+---
+
+## Security and Privacy Model
+
+### How Beacon AI Is Safer Than Traditional Forms
+
+| Traditional Form | Beacon AI |
+|------------------|-----------|
+| Stores name/email | Stores nothing about identity |
+| Login required | No login |
+| Single submission | Interactive guided conversation |
+| No confirmation | Case ID + Secret Key as proof |
+| No status tracking | Full status tracking + two-way communication |
+| Spam floods inbox | Credibility scoring filters low-quality reports |
+
+### Authentication Architecture
+
+| Actor | Mechanism | Details |
+|-------|-----------|---------|
+| Reporter | None (anonymous) | Session token is random, hashed, not tied to identity |
+| Tracking Page | Case ID + Secret Key | Both required; key stored as hash |
+| Admin | JWT Token | HS256 signed; 60-minute expiry |
+
+### Environment Variables (Secrets Handling)
+
+All secrets are stored in environment variables, never in code:
+
+```
+SECRET_KEY            # JWT signing key
+ADMIN_PASSWORD_HASH   # Hashed admin password
+DATABASE_URL          # Supabase PostgreSQL connection
+SUPABASE_URL          # Supabase project URL
+SUPABASE_KEY          # Supabase anon key
+SUPABASE_SERVICE_ROLE_KEY  # Supabase service role key
+GROQ_API_KEY          # Groq Cloud API key
+GEMINI_API_KEY        # Google Gemini API key
+```
+
+### Row Level Security (RLS)
+
+Supabase RLS is respected via:
+- **Service Role Key** used for backend operations (bypasses RLS)
+- **Anon Key** never exposed to frontend
+- All file uploads go through backend, not directly from browser
+
+---
+
+## Frequently Asked Questions
+
+### "What if someone submits fake data?"
+
+**Answer:** Beacon AI does not determine truth. However:
+- Vague reports without specifics receive low credibility scores (10-25%)
+- Reports with no evidence score 0 on evidence strength
+- AI explains scoring reasoning transparently
+- Administrators can deprioritize low-score reports
+
+**The system is not gullible — it requires substance to score well.**
+
+---
+
+### "What if AI fails?"
+
+**Answer:** The system is designed for graceful degradation:
+
+| Failure | Fallback |
+|---------|----------|
+| LLM timeout | Friendly message + user can retry |
+| Rate limit | Exponential backoff + retry |
+| Vision model fails | Falls back to Gemini |
+| All AI fails | Case is saved; scoring marked "failed" |
+| Tesseract unavailable | OCR skipped; other analysis continues |
+
+**No data is lost. Cases are never deleted due to AI failures.**
+
+---
+
+### "How is anonymity guaranteed?"
+
+**Answer:** By design, identity is never captured:
+- No login, no email, no phone required
+- No `user_id` field in any database table
+- Session tokens are random and not linked to anything
+- IP addresses are not logged by the application
+- After submission, the only proof of ownership is the Secret Key
+
+**If someone wanted to find the reporter, there is no data to find.**
+
+---
+
+### "How does an admin trust the report?"
+
+**Answer:** Through the credibility scoring system:
+- **High scores (67-100)** indicate detailed narrative + strong evidence
+- **Medium scores (34-66)** indicate partial details or weak evidence
+- **Low scores (0-33)** indicate vague reports or no evidence
+
+The AI provides:
+- A full explanation of why the score was given
+- Sub-scores for narrative vs. evidence
+- Limitations and confidence assessment
+
+**Admins can then apply professional judgment.**
+
+---
+
+### "How is this better than a form?"
+
+| Feature | Web Form | Beacon AI |
+|---------|----------|-----------|
+| Guided conversation | ❌ | ✅ |
+| Follow-up questions | ❌ | ✅ (AI-driven) |
+| Evidence upload | Basic | ✅ (OCR + Analysis) |
+| Credibility assessment | ❌ | ✅ (0-100 score) |
+| Anonymous tracking | ❌ | ✅ (Case ID + Secret Key) |
+| Two-way communication | ❌ | ✅ (Secure channel) |
+| AI summaries for admin | ❌ | ✅ |
+| Status updates | ❌ | ✅ |
+
+---
+
+### "What happens if the system crashes?"
+
+**Answer:**
+- **Backend crashes:** Uvicorn auto-restarts; no data lost (all committed to Supabase)
+- **Database unavailable:** App starts in "degraded mode"; returns error messages
+- **Frontend crashes:** React error boundaries; user refreshes
+- **Scoring task fails:** Marked as failed in DB; admin can manually re-trigger
+
+**All critical data is persisted to Supabase before any in-memory operation.**
+
+---
+
+## Pitch-Ready Summary
+
+> **Beacon AI is an anonymous complaint and incident reporting system that protects reporter identity while giving administrators the intelligence they need to act.**
+
+### The 2-Minute Pitch
+
+*"Imagine a government department or NGO that receives hundreds of complaints a year. Today, they use email or paper forms. People are scared to report because their identity might be exposed. Organizations can't tell which reports are genuine versus spam.*
+
+*Beacon AI solves both problems.*
+
+*For reporters, it's like talking to a trusted advisor — no login, no identity stored, just a calm AI that guides them through structured questions and accepts evidence like photos, audio, and documents. At the end, they get a Case ID and Secret Key — those are the only credentials they need to track their case and communicate with the organization.*
+
+*For administrators, reports arrive with an AI-generated summary and a credibility score from 0 to 100. They can see at a glance which reports have substance and which are vague. They can publish updates that the reporter sees — all without knowing who that reporter is.*
+
+*The AI doesn't decide anything. It helps. All decisions are made by humans.*
+
+*Beacon AI is privacy by design. There is no identity to leak because we never captured it in the first place."*
+
+---
+
+### Technical Credibility Points
+
+- **Async-first FastAPI backend** — handles thousands of concurrent sessions
+- **Supabase PostgreSQL** — enterprise-grade cloud database
+- **Groq Cloud AI** — Llama 3.3 70B for reasoning, Whisper for transcription
+- **Multi-modal evidence analysis** — OCR, visual context, audio transcription
+- **Explainable AI scoring** — full breakdown with rationale
+- **Two-way anonymous communication** — unique in the space
+- **JWT authentication for admins** — industry-standard security
+
+---
+
+### Key Differentiators
+
+1. **True anonymity** — No login, no identity storage, no profiling
+2. **AI-assisted, not AI-decided** — Humans remain in control
+3. **Credibility scoring** — Helps admins prioritize without making judgments
+4. **Two-way communication** — Unique feature enabling follow-up without identity
+5. **Evidence intelligence** — OCR, visual analysis, transcription built-in
+6. **Explainable AI** — Every score comes with reasoning
+
+---
+
+*Document generated for pitch preparation — January 2026*

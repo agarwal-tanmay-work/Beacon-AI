@@ -49,8 +49,8 @@ async def lifespan(app: FastAPI):
     logger.info("startup", project=settings.PROJECT_NAME)
     yield
     # Cleanup
-    from app.services.ai_service import GroqService
-    await GroqService.close_client()
+    from app.services.ai_service import GeminiService
+    await GeminiService.close_client()
     logger.info("shutdown")
 
 app = FastAPI(
