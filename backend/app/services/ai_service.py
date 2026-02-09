@@ -87,12 +87,31 @@ class GeminiService:
 
         client = await cls.get_client()
         try:
-            response = await client.post(
-                url,
-                json=payload,
-                timeout=effective_timeout
-            )
+            # Retry loop for network errors (max 3 times)
+            import httpx
+            import asyncio
             
+            response = None
+            max_network_retries = 3
+            
+            for attempt in range(max_network_retries):
+                try:
+                    response = await client.post(
+                        url,
+                        json=payload,
+                        timeout=effective_timeout
+                    )
+                    break # Success
+                except httpx.NetworkError as e:
+                    if attempt == max_network_retries - 1:
+                        logger.error("gemini_network_error_final", error=repr(e))
+                        return None, None
+                    logger.warning(f"gemini_network_retry_{attempt+1}", error=str(e))
+                    await asyncio.sleep(1 * (attempt + 1))
+            
+            if not response:
+                return None, None
+
             if response.status_code == 429 or response.status_code == 503:
                 retry_after = response.headers.get("Retry-After")
                 wait_seconds = int(retry_after) if retry_after and retry_after.isdigit() else 2
@@ -132,7 +151,7 @@ class GeminiService:
             return content, None
 
         except Exception as e:
-            logger.error("gemini_request_failed", error=str(e))
+            logger.error("gemini_request_failed", error=repr(e), traceback=traceback.format_exc())
             return None, None
 
     @classmethod
