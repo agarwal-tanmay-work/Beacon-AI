@@ -63,6 +63,8 @@ export function ChatInterface() {
 
     const [secretKey, setSecretKey] = useState<string | null>(null);
     const [finalCaseId, setFinalCaseId] = useState<string | null>(null);
+    const [loadingTooLong, setLoadingTooLong] = useState(false);
+    const slowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const isLocked = currentStep === "SUBMITTED";
 
@@ -181,10 +183,11 @@ export function ChatInterface() {
         // Clear inputs immediately
         setInputValue("");
         setPendingFiles([]);
-        // We DON'T revoke URLs yet because they are used in the message bubble.
-        // In a real app we'd upload -> get remote URL -> replace. 
-        // For here we keep local ObjectURL alive or let it leak until refresh.
         setLoading(true);
+        setLoadingTooLong(false);
+
+        // Show "server is waking up" hint after 8 s (Render free-plan cold start)
+        slowTimerRef.current = setTimeout(() => setLoadingTooLong(true), 8000);
 
         try {
             let currentReportId = reportId;
@@ -192,7 +195,7 @@ export function ChatInterface() {
 
             // Initialize session if needed
             if (!currentReportId || !currentAccessToken) {
-                const seed = Math.random().toString(36).substring(7);
+                const seed = Math.random().toString(36).substring(2);
                 const initRes = await api.post("/public/reports/create", { client_seed: seed });
                 currentReportId = initRes.data.report_id;
                 currentAccessToken = initRes.data.access_token;
@@ -202,22 +205,20 @@ export function ChatInterface() {
 
             if (!currentReportId || !currentAccessToken) throw new Error("Session init failed");
 
-            // 1. Upload ALL Files sequentially (to keep simple)
+            // 1. Upload files
             for (const file of filesToSend) {
                 const formData = new FormData();
                 formData.append("report_id", currentReportId);
                 formData.append("access_token", currentAccessToken);
                 formData.append("file", file);
-
                 await api.post("/public/evidence/upload", formData, {
-                    headers: { "Content-Type": "multipart/form-data" }
+                    headers: { "Content-Type": "multipart/form-data" },
                 });
             }
 
-            // 2. Send Message
+            // 2. Send message
             const fileNames = filesToSend.map(f => f.name).join(", ");
-            // If empty content but has files, add context for LLM
-            const messageContent = content || (filesToSend.length > 0 ? `[User uploaded ${filesToSend.length} files: ${fileNames}]` : " ");
+            const messageContent = content || (filesToSend.length > 0 ? `[User uploaded ${filesToSend.length} file(s): ${fileNames}]` : " ");
 
             const res = await api.post("/public/reports/message", {
                 report_id: currentReportId,
@@ -230,17 +231,14 @@ export function ChatInterface() {
                 sender: res.data.sender,
                 content: res.data.content,
                 timestamp: res.data.timestamp,
-                // next_step logic
             };
 
-            // Check for next_step / case_id logic
             if (res.data.next_step === "SUBMITTED" || res.data.next_step === "COMPLETED") {
                 setCurrentStep("SUBMITTED");
                 if (res.data.case_id) setFinalCaseId(res.data.case_id);
                 if (res.data.secret_key) setSecretKey(res.data.secret_key);
-                sysMsg.next_step = "SUBMITTED"; // Normalize for UI
+                sysMsg.next_step = "SUBMITTED";
             } else if (res.data.case_id && res.data.secret_key) {
-                // Fallback: If IDs are present, force lock even if status mismatch
                 setCurrentStep("SUBMITTED");
                 setFinalCaseId(res.data.case_id);
                 setSecretKey(res.data.secret_key);
@@ -252,10 +250,29 @@ export function ChatInterface() {
 
             setMessages((prev) => [...prev, sysMsg]);
 
-        } catch (err) {
-            console.error("Send Failed", err);
-            // Error handling UI could be added here
+        } catch (err: any) {
+            console.error("Send failed:", err);
+            const isTimeout = err?.code === "ECONNABORTED" || err?.message?.includes("timeout");
+            const isNetwork = !err?.response;
+            const serverMsg = err?.response?.data?.detail;
+
+            let errorText = "Something went wrong. Please try again.";
+            if (isTimeout) errorText = "The server took too long to respond. It may be starting up — please wait a moment and try again.";
+            else if (isNetwork) errorText = "Cannot reach the server. Please check your connection and try again.";
+            else if (serverMsg) errorText = `Error: ${serverMsg}`;
+
+            setMessages((prev) => [
+                ...prev,
+                {
+                    id: crypto.randomUUID(),
+                    sender: "SYSTEM",
+                    content: errorText,
+                    timestamp: new Date().toISOString(),
+                },
+            ]);
         } finally {
+            if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
+            setLoadingTooLong(false);
             setLoading(false);
         }
     };
@@ -351,14 +368,21 @@ export function ChatInterface() {
                     </AnimatePresence>
 
                     {loading && (
-                        <div className="flex gap-4">
-                            <div className="bg-white/5 border border-white/10 px-4 py-3 rounded-[1.25rem] rounded-tl-none ml-0">
-                                <div className="flex gap-1">
-                                    <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                                    <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                                    <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                        <div className="flex flex-col gap-2">
+                            <div className="flex gap-4">
+                                <div className="bg-white/5 border border-white/10 px-4 py-3 rounded-[1.25rem] rounded-tl-none ml-0">
+                                    <div className="flex gap-1">
+                                        <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                                        <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                                        <span className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                                    </div>
                                 </div>
                             </div>
+                            {loadingTooLong && (
+                                <p className="text-xs text-white/30 ml-1 animate-pulse">
+                                    Server is starting up, this may take up to 30 seconds...
+                                </p>
+                            )}
                         </div>
                     )}
                     <div ref={bottomRef} className="h-1" />

@@ -1,2 +1,9 @@
-NEXT_PUBLIC_API_URL="http://localhost:8000/api/v1"
+# Server-side proxy URL — Next.js rewrites forward /api/v1/* to this backend.
+# Used in next.config.ts. NOT exposed to the browser (no NEXT_PUBLIC_ prefix).
+BACKEND_URL="http://localhost:8000"
+
+# Optional: set this only if you want to bypass the proxy and call the backend directly.
+# Leave unset when using the proxy (recommended for Vercel deployments).
+# NEXT_PUBLIC_API_URL="http://localhost:8000"
+
 NEXT_PUBLIC_APP_NAME="Beacon AI"

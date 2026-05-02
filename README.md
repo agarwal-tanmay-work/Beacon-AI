@@ -258,7 +258,7 @@ python run_server.py
 ```bash
 cd frontend
 npm install
-echo 'NEXT_PUBLIC_API_URL=http://localhost:8000' > .env.local
+echo 'BACKEND_URL=http://localhost:8000' > .env.local
 npm run dev
 # http://localhost:3000
 ```
@@ -291,28 +291,52 @@ npm run dev
 | `ENVIRONMENT` | No | `development` or `production` (default: `production`) |
 | `ADMIN_PASSWORD_HASH` | No | bcrypt hash of admin password |
 
-### Frontend / Admin Portal (`.env.local`)
+### Frontend / Admin Portal (`.env.local` — local dev only)
 
 | Variable | Description |
 |---|---|
-| `NEXT_PUBLIC_API_URL` | Backend base URL, e.g. `https://beacon-backend.onrender.com` |
+| `BACKEND_URL` | Backend base URL for local dev, e.g. `http://localhost:8000` |
+
+> `NEXT_PUBLIC_API_URL` is no longer needed. The Next.js rewrite proxy reads the server-side `BACKEND_URL` variable and forwards `/api/v1/*` requests automatically. This also means the backend URL is never exposed in the browser bundle.
 
 ---
 
-## Deployment on Render
+## Deployment
 
-The backend has a `Dockerfile` — Render auto-detects it.
+### Backend on Render
 
-1. Create a **Web Service** on Render pointed at `backend/`
-2. Set environment type to **Docker**
-3. Add all environment variables from the table above
-4. Set **Health Check Path** to `/health`
+The backend ships with a `Dockerfile` — Render detects it automatically.
 
-> **Security:** If your `GEMINI_API_KEY` was ever committed to a public Git repository, **revoke it immediately** in [Google AI Studio](https://aistudio.google.com/app/apikey) and generate a new one. Set the new key only in Render's environment variable settings — never in source files.
+1. Create a **Web Service** on Render, point the root directory to `backend/`
+2. Set **Environment** to **Docker**
+3. Set **Health Check Path** to `/health`
+4. Add all environment variables from the Backend table above
+
+> **Security:** If your `GEMINI_API_KEY` was ever committed to a public repository, **revoke it immediately** in [Google AI Studio](https://aistudio.google.com/app/apikey) and generate a new one. Store it only in Render's environment variables — never in source files.
+
+#### Render Free Plan — Cold Start
+
+Render free-tier services sleep after 15 minutes of inactivity and take ~30–60 seconds to wake up. To minimize disruption:
+
+- **UptimeRobot** (free): Ping your backend's `/health` endpoint every 5 minutes to keep it warm
+- The frontend already shows `"Server is starting up..."` after 8 seconds of waiting so users know what's happening
+- The Axios timeout is set to 150 seconds — more than enough for a cold start
+
+### Frontend on Vercel
+
+The frontend proxies all API calls through Next.js rewrites, so **no CORS configuration is needed on the backend**.
+
+**Required Vercel environment variable:**
+
+| Variable | Value |
+|---|---|
+| `BACKEND_URL` | Your Render backend URL, e.g. `https://beacon-backend.onrender.com` |
+
+That's it. Do **not** set `NEXT_PUBLIC_API_URL` on Vercel — it's not needed with the proxy setup.
 
 ### Supabase Pooler
 
-If using Supabase's Transaction Pooler (port `6543`), the `session.py` automatically disables prepared statements when it detects `:6543` or `pooler.supabase.com` in the connection string.
+If connecting via Supabase's Transaction Pooler (port `6543`), `session.py` automatically disables prepared statements when it detects `:6543` or `pooler.supabase.com` in the URL.
 
 ---
 
@@ -422,12 +446,6 @@ Score = Narrative Consistency (0–40) + Evidence Strength (0–40) + Behavioral
 4. Open a pull request
 
 Security bug reports are especially welcome.
-
----
-
-## License
-
-MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
