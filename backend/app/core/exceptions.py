@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 import structlog
+import traceback
 
 logger = structlog.get_logger()
 
@@ -11,7 +12,14 @@ async def global_exception_handler(request: Request, exc: Exception):
     Catch-all for unhandled exceptions.
     Prevents stack trace leakage in production.
     """
-    logger.error("unhandled_exception", error=str(exc), path=request.url.path)
+    logger.error(
+        "unhandled_exception",
+        error=str(exc),
+        error_type=type(exc).__name__,
+        traceback=traceback.format_exc(),
+        path=request.url.path,
+        method=request.method,
+    )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "An unexpected error occurred. Please contact support."},

@@ -106,12 +106,17 @@ class ReportEngine:
             state_tracking = state_res.scalar_one_or_none()
             
             if not state_tracking:
-                # Auto-initialize if missing
+                # Auto-initialize if missing (creates its own session and commits)
                 await ReportEngine.initialize_report(report_id, "tk_auto_gen")
+                # expire_all forces SQLAlchemy to discard its identity-map cache and
+                # re-read from the DB on the next query, ensuring we see the committed row
+                await supabase_session.expire_all()
                 state_stmt = select(ReportStateTracking).where(ReportStateTracking.report_id == UUIDType(report_id))
                 state_res = await supabase_session.execute(state_stmt)
                 state_tracking = state_res.scalar_one_or_none()
-
+                if not state_tracking:
+                    logger.error("state_tracking_init_failed", report_id=report_id)
+                    raise RuntimeError(f"Failed to initialize state tracking for report {report_id}. Check DB connectivity.")
 
             current_state = {}
             if state_tracking and state_tracking.context_data:
@@ -150,10 +155,11 @@ class ReportEngine:
                 current_state["evidence"] = "Uploaded" # Mark evidence as provided
                 
                 # Persist this specific state update immediately so we don't re-process if LLM crashes
-                new_context_data = dict(state_tracking.context_data or {})
-                new_context_data["extracted"] = current_state
-                state_tracking.context_data = new_context_data
-                await supabase_session.flush()
+                if state_tracking is not None:
+                    new_context_data = dict(state_tracking.context_data or {})
+                    new_context_data["extracted"] = current_state
+                    state_tracking.context_data = new_context_data
+                    await supabase_session.flush()
 
             # Convert to LLM format
             conversation_history = []
@@ -180,8 +186,8 @@ class ReportEngine:
                 for k, v in new_extracted_data.items():
                     if v and v != "...":
                         updated_state[k] = v
-                
-                new_context_data = dict(state_tracking.context_data)
+
+                new_context_data = dict(state_tracking.context_data or {})
                 new_context_data["extracted"] = updated_state
                 state_tracking.context_data = new_context_data
                 await supabase_session.flush()

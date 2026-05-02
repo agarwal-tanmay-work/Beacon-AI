@@ -82,10 +82,11 @@ engine = create_async_engine(
     db_url,
     echo=settings.ENVIRONMENT == "development",
     future=True,
-    pool_size=10,        # Reduced initial pool size for Supabase stability
-    max_overflow=20,     # Allow more temporary connections under load
-    pool_timeout=30,      # Wait 30s before giving up
-    pool_recycle=1800,    # Recycle connections after 30 mins
+    pool_size=5,          # Supabase free tier: ~10 total connections; leave headroom for admin portal
+    max_overflow=10,      # Burst cap: 15 total connections maximum
+    pool_timeout=30,      # Raise TimeoutError instead of hanging if pool exhausted
+    pool_recycle=1800,    # Recycle connections every 30 min to avoid stale sockets
+    pool_pre_ping=True,   # Test connection health before checkout to handle dropped idle sockets
     connect_args=connect_args,
 )
 

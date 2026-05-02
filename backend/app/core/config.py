@@ -16,18 +16,24 @@ class Settings(BaseSettings):
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
-        if isinstance(v, str) and not v.strip():
-            return []
-        if isinstance(v, str) and not v.startswith("["):
-            return [i.strip() for i in v.split(",")]
-        elif isinstance(v, str):
-            v = v.strip("[").strip("]").strip('"').strip("'")
-            if not v:
-                return []
-            return [i.strip() for i in v.split(",")]
-        elif isinstance(v, list):
+        if isinstance(v, list):
             return v
-        raise ValueError(v)
+        if not isinstance(v, str) or not v.strip():
+            return []
+        raw = v.strip()
+        # Handle JSON array: ["https://a.com","https://b.com"]
+        if raw.startswith("["):
+            import json
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return [str(i).strip() for i in parsed]
+            except json.JSONDecodeError:
+                pass
+            # Fallback: strip brackets and split
+            raw = raw[1:-1] if raw.endswith("]") else raw[1:]
+        # Comma-separated: https://a.com,https://b.com
+        return [i.strip().strip('"').strip("'") for i in raw.split(",") if i.strip()]
 
     # Database
     DATABASE_URL: str
