@@ -1,26 +1,13 @@
 import asyncio
-# from app.core.network_utils import force_ipv4_resolution
-
-# Apply network patch immediately to fix Render/Supabase IPv6 issues
-# DISABLED: Force IPv4 was blocking IPv6-only Supabase resolution in this environment.
-# force_ipv4_resolution() # Commented out to allow IPv6/Supabase connectivity
-
 import structlog
-from app.db.local_db import local_engine, init_local_db
 from app.core.config import settings
-
-# If we eventually migrate to a real remote DB, we'd import that engine here
-# from app.db.session import engine 
 
 logger = structlog.get_logger()
 
 async def run_init_db():
     logger.info("db_init_start")
-    
-    # 1. Initialize Local SQLite (SKIPPED - MIGRATED TO SUPABASE)
-    # await init_local_db()
-    
-    # 2. Initialize Supabase PostgreSQL Tables (if connection string present)
+
+    # Initialize Supabase PostgreSQL Tables (if connection string present)
     if settings.DATABASE_URL and "sqlite" not in settings.DATABASE_URL:
         # Import here to avoid circular dependencies or early initialization
         from app.db.session import engine

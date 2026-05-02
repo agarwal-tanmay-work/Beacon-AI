@@ -68,4 +68,4 @@ async def handle_message(
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(f"Error in handle_message: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error. Please try again.")

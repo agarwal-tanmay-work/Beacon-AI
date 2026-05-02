@@ -1,10 +1,4 @@
 from contextlib import asynccontextmanager
-from app.core.network_utils import force_ipv4_resolution
-
-# Apply network patch immediately
-# DISABLED: Force IPv4 was blocking IPv6-only Supabase resolution in this environment.
-# force_ipv4_resolution()
-
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
@@ -12,7 +6,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import os
-import traceback
 import structlog
 
 from app.core.config import settings
@@ -76,10 +69,8 @@ app.add_exception_handler(Exception, global_exception_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
-# Health Check
 from fastapi import Response
 
-# Health Check
 @app.head("/health", tags=["system"])
 async def health_check_head():
     """
@@ -128,8 +119,3 @@ UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
-# app.include_router(api_router, prefix=settings.API_V1_STR)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000)

@@ -1,49 +1,63 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-venv/
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-*.log
-*.sqlite3
-*.db
-backend_config.env
-
-# Node
-node_modules/
-.next/
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
 dist/
 build/
-coverage/
+.eggs/
 
-# IDE
-.vscode/
+# Virtual environments
+venv/
+env/
+.env/
+.venv/
+
+# Environment / secrets — NEVER commit these
+.env
+.env.*
+*.env
+backend_config.env
+!backend_config.env.example
+!frontend/.env.example
+!frontend/env-example
+
+# Local SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploads (ephemeral on Render; files are stored in Supabase)
+backend/uploads/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output
+frontend/.next/
+frontend/out/
+
+# IDE / OS
 .idea/
-
-# System
+.vscode/
+*.swp
+*.swo
 .DS_Store
 Thumbs.db
 
-# Project specific
-backend/venv/
-backend/.env
-frontend/.env.local
-backend/backend_config.env
-
-# Additional ignores
-backend/uploads/
-venv_fresh/
-
-# Backups
-*.bak
-*.log
-debug_*.py
-test_result*.txt
-sim_output.txt
-test_*.py
-**/test_*.py
-
+# Test / debug artifacts
+*.md.bak
+test_audio.*
+dummy.*
+temp_verify*
+res.json
+res_v2.json
+models.json
+create_report.json
