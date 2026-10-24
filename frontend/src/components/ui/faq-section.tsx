@@ -97,10 +97,6 @@ export function FAQSection({
             answer: "Only you, with your Case ID and Secret Key, can follow your case and message the investigators. Your report itself is reviewed by authorized investigators through a protected admin portal. It is never published or made public."
         },
         {
-            question: "How is AI used with my report?",
-            answer: "The conversation, and any photos or recordings you attach, are processed by Google's Gemini AI models to guide you through the questions, read your evidence, and prepare a summary and credibility score for investigators. People, not the AI, make every decision about your case."
-        },
-        {
             question: "Is there any public visibility or immediate action?",
             answer: "No. Reports are not made public and do not result in instant outcomes. Beacon AI provides a secure environment to document information responsibly without pressure, exposure, or immediate judgment."
         }

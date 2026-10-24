@@ -12,7 +12,7 @@ export function Hero() {
           Height set to 50vh to place the horizon line exactly in the middle of the screen.
           translate-y-28: Pushing text down significantly to sit just above the horizon line.
       */}
-            <div className="relative h-[45vh] md:h-[50vh] w-full flex flex-col items-center justify-end overflow-hidden z-30 pb-0 translate-y-16 md:translate-y-28">
+            <div className="relative h-[45vh] md:h-[50vh] w-full flex flex-col items-center justify-end overflow-hidden z-30 pb-1 md:pb-2">
                 <h1 className="font-sans text-[60px] md:text-[140px] font-extrabold leading-none tracking-tight text-white">
                     Beacon AI
                 </h1>
