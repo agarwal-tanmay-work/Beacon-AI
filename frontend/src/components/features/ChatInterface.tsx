@@ -163,7 +163,9 @@ export function ChatInterface() {
 
         try {
             if (!sessionRef.current) {
-                const { data } = await api.post<{ report_id: string; access_token: string }>("/public/reports/create", {});
+                const { data } = await api.post<{ report_id: string; access_token: string }>("/public/reports/create", {
+                    client_seed: newId(), // older API versions require this field; current ones ignore it
+                });
                 sessionRef.current = { reportId: data.report_id, accessToken: data.access_token };
             }
             const session = sessionRef.current;
