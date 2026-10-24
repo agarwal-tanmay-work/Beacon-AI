@@ -1,24 +1,23 @@
-"""
-Beacon Update Model - Stores updates for a case.
-"""
+"""Public status updates published by investigators."""
 
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from datetime import UTC, datetime
+
+from sqlalchemy import Column, DateTime, ForeignKey, String, Text, Uuid
+
 from app.db.base import Base
 
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
 class BeaconUpdate(Base):
-    """
-    Stores status updates for a beacon case.
-    """
     __tablename__ = "beacon_update"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     case_id = Column(String, ForeignKey("beacon.case_id"), nullable=False, index=True)
-    
-    raw_update = Column(Text, nullable=True) # Original text from Admin
-    public_update = Column(Text, nullable=False) # LLM-rewritten text for public
-    updated_by = Column(String, nullable=True)   # Admin User ID or Name
-    
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    raw_update = Column(Text, nullable=True)  # what the admin typed (internal)
+    public_update = Column(Text, nullable=False)  # what the reporter sees
+    updated_by = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)

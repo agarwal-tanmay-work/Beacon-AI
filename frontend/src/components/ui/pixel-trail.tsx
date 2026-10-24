@@ -14,7 +14,6 @@ const TRAIL_LENGTH = 40
 const FADE_SPEED = 0.04
 
 export function PixelCursorTrail() {
-    const containerRef = useRef<HTMLDivElement>(null)
     const [pixels, setPixels] = useState<Pixel[]>([])
     const pixelIdRef = useRef(0)
     const lastPositionRef = useRef({ x: 0, y: 0 })

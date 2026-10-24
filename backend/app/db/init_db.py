@@ -1,50 +1,35 @@
+"""Schema management.
+
+Alembic was configured but never usable (no revisions, and it needed a driver that is not installed), so
+the real schema management has always been ``create_all``. That is kept, but done properly:
+
+* ``create_all`` runs on every start (it only creates what is missing - the old "skip if the beacon table
+  exists" shortcut meant tables added later were never created on an existing database);
+* additive column changes are applied with ``ADD COLUMN IF NOT EXISTS`` (idempotent, never destructive).
+"""
+
 import asyncio
+
 import structlog
-from app.core.config import settings
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-logger = structlog.get_logger()
+import app.models  # noqa: F401  (registers the models)
+from app.db.base import Base
+from app.db.session import get_engine
 
-async def run_init_db():
-    logger.info("db_init_start")
+logger = structlog.get_logger(__name__)
 
-    # Initialize Supabase PostgreSQL Tables (if connection string present)
-    if settings.DATABASE_URL and "sqlite" not in settings.DATABASE_URL:
-        # Import here to avoid circular dependencies or early initialization
-        from app.db.session import engine
-        from app.db.base import Base
-        # Trigger model registration
-        from app.models.beacon import Beacon
-        from app.models.beacon_update import BeaconUpdate
-        from app.models.beacon_message import BeaconMessage
-        from app.models.report import Report, ReportConversation, ReportStateTracking, Evidence
-        
-        try:
-            # Add timeout to fail fast if connection hangs (e.g. firewall/network issues)
-            # 10 seconds should be plenty for a healthy connection
-            async with asyncio.timeout(10):
-                async with engine.begin() as conn:
-                    # Check if at least one core table exists before running create_all
-                    # This avoids overhead on every startup if DB is healthy
-                    from sqlalchemy import inspect
-                    
-                    def check_tables(connection):
-                        inspector = inspect(connection)
-                        return inspector.has_table("beacon")
-                    
-                    if await conn.run_sync(check_tables):
-                        logger.info("remote_db_already_initialized", message="Core tables found, skipping create_all")
-                    else:
-                        logger.info("remote_db_creating_tables", message="Tables missing, running create_all")
-                        await conn.run_sync(Base.metadata.create_all)
-            logger.info("remote_db_init_complete")
-        except TimeoutError:
-            logger.error("remote_db_init_timeout", message="Connection to database timed out after 10s. Check network/firewall/URL settings.")
-            raise
-        except Exception as e:
-            logger.error("remote_db_init_failed", error=str(e))
-            raise
-    
-    logger.info("db_init_complete")
+# Applied on PostgreSQL only; a fresh database gets these columns from create_all anyway.
+_ADDITIVE_COLUMNS = ("ALTER TABLE beacon ADD COLUMN IF NOT EXISTS reporter_details JSON",)
 
-if __name__ == "__main__":
-    asyncio.run(run_init_db())
+
+async def ensure_schema(engine: AsyncEngine | None = None, *, timeout: float = 30.0) -> None:
+    engine = engine or get_engine()
+    async with asyncio.timeout(timeout):
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            if conn.dialect.name == "postgresql":
+                for statement in _ADDITIVE_COLUMNS:
+                    await conn.execute(text(statement))
+    logger.info("db_schema_ready", dialect=engine.dialect.name)

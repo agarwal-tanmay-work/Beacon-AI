@@ -1,35 +1,34 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useEffect, useSyncExternalStore } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { getToken, isExpired } from "@/lib/auth";
+
+function subscribe(onChange: () => void) {
+    window.addEventListener("storage", onChange); // sign-in / sign-out in another tab
+    return () => window.removeEventListener("storage", onChange);
+}
+
+/** True when this tab holds a valid, unexpired admin token. Server render: false (nothing is shown until the client checks). */
+function useSignedIn(): boolean {
+    return useSyncExternalStore(
+        subscribe,
+        () => !isExpired(getToken()),
+        () => false,
+    );
+}
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
-    const [authorized, setAuthorized] = useState(false);
+    const signedIn = useSignedIn();
+    const onLoginPage = pathname === "/login";
 
     useEffect(() => {
-        // Allow login page access without check
-        if (pathname === "/login") {
-            setAuthorized(true);
-            return;
-        }
+        if (!signedIn && !onLoginPage) router.replace("/login");
+    }, [signedIn, onLoginPage, router]);
 
-        // Check strict session storage
-        const token = sessionStorage.getItem("admin_token");
-
-        if (!token) {
-            router.replace("/login");
-        } else {
-            setAuthorized(true);
-        }
-    }, [pathname, router]);
-
-    // Show nothing while checking (prevents flash of content)
-    // Or a loading spinner if preferred, but requirements say "inaccessible"
-    if (!authorized && pathname !== "/login") {
-        return null;
-    }
-
+    // Never flash protected content to a signed-out visitor.
+    if (!signedIn && !onLoginPage) return null;
     return <>{children}</>;
 }

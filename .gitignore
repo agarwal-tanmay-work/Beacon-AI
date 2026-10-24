@@ -1,63 +1,48 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.egg
-*.egg-info/
-dist/
-build/
-.eggs/
-
-# Virtual environments
-venv/
-env/
-.env/
-.venv/
-
-# Environment / secrets — NEVER commit these
+# ── Secrets - NEVER commit ──────────────────────────────────────────────────────
 .env
 .env.*
+!.env.example
 *.env
+!*.env.example
 backend_config.env
-!backend_config.env.example
-!frontend/.env.example
-!frontend/env-example
+*.pem
+*.key
 
-# Local SQLite databases
+# ── Python ──────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── Local data (databases, evidence uploads, test storage) ──────────────────────
 *.db
 *.sqlite
 *.sqlite3
-
-# Uploads (ephemeral on Render; files are stored in Supabase)
 backend/uploads/
+.local_storage/
+backend/tests/.tmp_storage/
 
-# Node / Next.js
+# ── Node / Next.js ──────────────────────────────────────────────────────────────
 node_modules/
 .next/
 out/
+build/
+dist/
+next-env.d.ts
+*.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
+.vercel
 
-# Build output
-frontend/.next/
-frontend/out/
-
-# IDE / OS
+# ── Tooling / OS ────────────────────────────────────────────────────────────────
+.gstack/
 .idea/
 .vscode/
 *.swp
-*.swo
 .DS_Store
 Thumbs.db
-
-# Test / debug artifacts
-*.md.bak
-test_audio.*
-dummy.*
-temp_verify*
-res.json
-res_v2.json
-models.json
-create_report.json

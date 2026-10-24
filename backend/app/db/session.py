@@ -1,110 +1,171 @@
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.pool import NullPool
+"""Async engine / session management.
+
+The engine is created lazily (first use), not at import time: the old module resolved DNS and opened
+SSL contexts while merely being imported, which made start-up order fragile and tests impossible.
+"""
+
+import ipaddress
+import socket
+import ssl
+import uuid
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+import structlog
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+
 from app.core.config import settings
 
-# Create Async Engine
-# For Supabase/PostgreSQL with asyncpg, SSL is typically required
-db_url = settings.DATABASE_URL
-# Support both postgres:// and postgresql:// and ensure asyncpg driver is used
-if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
-elif db_url.startswith("postgresql://"):
-    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+logger = structlog.get_logger(__name__)
 
-import ssl
-import socket
-import dns.resolver
-from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
-# FORCE IPv4: Manually resolve hostname to IPv4 to bypass uvloop/system IPv6 issues
-# This is critical on Render where IPv6 routing to Supabase can be flaky (Network is unreachable)
-try:
-    parsed = urlparse(db_url)
-    
-    # [FIX] STRIP `sslmode` from query params!
-    # asyncpg does not support `sslmode` in the connection string and raises "unexpected keyword argument".
-    # We handle SSL manually via the `connect_args["ssl"]` below.
-    qs = dict(parse_qsl(parsed.query))
-    if "sslmode" in qs:
-        del qs["sslmode"]
-        new_query = urlencode(qs)
-        parsed = parsed._replace(query=new_query)
-        db_url = urlunparse(parsed)
 
-    hostname = parsed.hostname
-    if hostname and not hostname.replace('.', '').isdigit() and ":" not in hostname: # Don't resolve if already IP
-        # Use dnspython to query DNS directly, bypassing flaky system/libc resolver (Errno -5)
+@dataclass
+class EngineConfig:
+    url: str
+    connect_args: dict[str, Any] = field(default_factory=dict)
+    is_sqlite: bool = False
+    transaction_pooler: bool = False
+
+
+def resolve_ipv4(host: str) -> str | None:
+    """Resolve ``host`` to an IPv4 address (Render cannot reach Supabase's IPv6-only hosts).
+
+    The system resolver is tried first; if it is flaky (``Errno -5`` on Render) public DNS via
+    dnspython is used as a fallback.
+    """
+    try:
+        infos = socket.getaddrinfo(host, None, family=socket.AF_INET, type=socket.SOCK_STREAM)
+        if infos:
+            return str(infos[0][4][0])
+    except OSError as exc:
+        logger.warning("db_dns_system_resolver_failed", host=host, error=str(exc))
+    try:
+        import dns.resolver
+
         resolver = dns.resolver.Resolver()
-        # Use Google DNS as fallback if system DNS server is unreachable/broken
-        resolver.nameservers = ['8.8.8.8', '8.8.4.4'] 
-        
+        resolver.nameservers = ["8.8.8.8", "1.1.1.1"]
+        resolver.lifetime = 5.0
+        return str(resolver.resolve(host, "A")[0])
+    except Exception as exc:  # noqa: BLE001 - any DNS failure just means "keep the hostname"
+        logger.warning("db_dns_fallback_failed", host=host, error=type(exc).__name__)
+        return None
+
+
+def prepare_engine_config(raw_url: str, *, resolver: Callable[[str], str | None] = resolve_ipv4) -> EngineConfig:
+    """Turn the configured DATABASE_URL into an asyncpg-ready URL plus connect arguments."""
+    url = raw_url.strip()
+    for legacy in ("postgres://", "postgresql://", "postgresql+psycopg2://", "postgresql+psycopg://"):
+        if url.startswith(legacy):
+            url = "postgresql+asyncpg://" + url[len(legacy) :]
+            break
+    if url.startswith("sqlite"):
+        return EngineConfig(url=url, is_sqlite=True)
+
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    # asyncpg rejects libpq-style "sslmode" in the DSN; translate it into connect_args instead.
+    requested = (query.pop("sslmode", None) or query.pop("ssl", None) or "").lower()
+    hostname = parts.hostname or ""
+    is_local = hostname in _LOCAL_HOSTS or not hostname
+
+    mode = settings.DB_SSL_MODE
+    if mode == "auto":
+        if is_local or requested == "disable":
+            mode = "disable"
+        elif requested in ("verify-full", "verify-ca"):
+            mode = "verify-full"
+        else:
+            mode = "require"
+
+    connect_args: dict[str, Any] = {}
+    if mode == "disable":
+        connect_args["ssl"] = False
+    elif mode == "require":
+        connect_args["ssl"] = "require"  # encrypted, certificate not verified (Supabase pooler default)
+    else:  # verify-full
+        connect_args["ssl"] = ssl.create_default_context(cafile=settings.DB_SSL_CA_FILE)
+
+    transaction_pooler = parts.port == 6543 or "pooler.supabase.com" in hostname
+    if transaction_pooler:
+        # pgbouncer / Supavisor transaction mode cannot reuse named prepared statements
+        # (harmless, if slightly slower, on the session pooler too).
+        query["prepared_statement_cache_size"] = "0"
+        connect_args["statement_cache_size"] = 0
+        connect_args["prepared_statement_name_func"] = lambda: f"__asyncpg_{uuid.uuid4()}__"
+
+    netloc = parts.netloc
+    if settings.DB_FORCE_IPV4 and not is_local and mode != "verify-full":
         try:
-            print(f"[NETWORK] Resolving {hostname} (IPv4/A)...", flush=True)
-            answers = resolver.resolve(hostname, 'A')
-            ipv4_addr = answers[0].to_text()
-            print(f"[NETWORK] Resolved {hostname} to {ipv4_addr} (via dnspython)", flush=True)
-            new_netloc = parsed.netloc.replace(hostname, ipv4_addr)
-            db_url = urlunparse(parsed._replace(netloc=new_netloc))
-        except Exception as e_a:
-            print(f"[NETWORK] IPv4 resolution failed for {hostname}: {e_a}", flush=True)
-            try:
-                print(f"[NETWORK] Resolving {hostname} (IPv6/AAAA)...", flush=True)
-                answers = resolver.resolve(hostname, 'AAAA')
-                ipv6_addr = answers[0].to_text()
-                print(f"[NETWORK] Resolved {hostname} to [{ipv6_addr}] (via dnspython)", flush=True)
-                new_netloc = parsed.netloc.replace(hostname, f"[{ipv6_addr}]")
-                db_url = urlunparse(parsed._replace(netloc=new_netloc))
-            except Exception as e_aaaa:
-                print(f"[NETWORK] IPv6 resolution also failed for {hostname}: {e_aaaa}", flush=True)
-                print(f"[NETWORK] Falling back to system resolver for {hostname}", flush=True)
-except Exception as e:
-    print(f"[NETWORK] DNS helper logic errored: {e}", flush=True)
+            ipaddress.ip_address(hostname)
+        except ValueError:
+            address = resolver(hostname)
+            if address:
+                userinfo, _, hostport = parts.netloc.rpartition("@")
+                port = f":{parts.port}" if parts.port else ""
+                netloc = f"{userinfo + '@' if userinfo else ''}{address}{port}"
+                logger.info("db_host_pinned_to_ipv4", host=hostname, address=address)
+            else:
+                logger.warning("db_host_not_pinned", host=hostname)
 
-# Configure connection args
-connect_args = {}
+    final = urlunsplit((parts.scheme, netloc, parts.path, urlencode(query), parts.fragment))
+    return EngineConfig(url=final, connect_args=connect_args, transaction_pooler=transaction_pooler)
 
-# Ensure SSL is enabled for Supabase/Public DBs
-if "supabase" in db_url or "db." in db_url or "127.0.0.1" not in db_url: # Assume remote if not local
-    # asyncpg requires an actual SSLContext object, not just a string
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE  # For simple 'require' behavior, or CERT_REQUIRED if we have robust CA certs
-    # Given we installed ca-certificates, we can try CERT_REQUIRED, but CERT_NONE is safer against random issuer errors
-    # to behave like 'sslmode=require' without 'verify-full'.
-    connect_args["ssl"] = ctx
 
-# If using Supabase Transaction Pooler (port 6543 OR explicit pooler hostname), we must disable prepared statements
-# (Though we are currently on 5432, we keep this logic just in case)
-if ":6543" in db_url or "pooler.supabase.com" in db_url:
-    connect_args["statement_cache_size"] = 0
+_engine: AsyncEngine | None = None
+_sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
-engine = create_async_engine(
-    db_url,
-    echo=settings.ENVIRONMENT == "development",
-    future=True,
-    pool_size=5,          # Supabase free tier: ~10 total connections; leave headroom for admin portal
-    max_overflow=10,      # Burst cap: 15 total connections maximum
-    pool_timeout=30,      # Raise TimeoutError instead of hanging if pool exhausted
-    pool_recycle=1800,    # Recycle connections every 30 min to avoid stale sockets
-    pool_pre_ping=True,   # Test connection health before checkout to handle dropped idle sockets
-    connect_args=connect_args,
-)
 
-# Create Session Factory
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autocommit=False,
-    autoflush=False,
-)
+def get_engine() -> AsyncEngine:
+    global _engine, _sessionmaker
+    if _engine is None:
+        config = prepare_engine_config(settings.DATABASE_URL)
+        kwargs: dict[str, Any] = {"connect_args": config.connect_args, "echo": False}
+        if not config.is_sqlite:
+            kwargs.update(
+                pool_size=settings.DB_POOL_SIZE,
+                max_overflow=settings.DB_MAX_OVERFLOW,
+                pool_timeout=30,  # fail with a clear error instead of hanging when the pool is exhausted
+                pool_recycle=1800,  # avoid stale sockets
+                pool_pre_ping=True,
+            )
+        _engine = create_async_engine(config.url, **kwargs)
+        _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False, autoflush=False)
+    return _engine
 
-async def get_db() -> AsyncSession:
-    """
-    Dependency for getting an async database session.
-    """
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+
+def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    get_engine()
+    assert _sessionmaker is not None
+    return _sessionmaker
+
+
+async def dispose_engine() -> None:
+    global _engine, _sessionmaker
+    if _engine is not None:
+        await _engine.dispose()
+    _engine, _sessionmaker = None, None
+
+
+def use_engine(engine: AsyncEngine) -> None:
+    """Inject an already-built engine (tests)."""
+    global _engine, _sessionmaker
+    _engine = engine
+    _sessionmaker = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+
+
+@asynccontextmanager
+async def open_session() -> AsyncIterator[AsyncSession]:
+    """For code that runs outside a request (background tasks, start-up work)."""
+    async with get_sessionmaker()() as session:
+        yield session
+
+
+async def get_db() -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency. Work is only persisted when the endpoint commits explicitly."""
+    async with get_sessionmaker()() as session:
+        yield session

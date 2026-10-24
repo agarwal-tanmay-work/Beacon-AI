@@ -1,71 +1,59 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
-import uuid
-from datetime import datetime
+"""Anonymous reporting session: create -> chat -> (submit)."""
 
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Request, Response
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import AppError
+from app.core.rate_limit import enforce, limit
 from app.db.session import get_db
-from app.models.beacon import Beacon
-from app.schemas.report import CreateReportRequest, ReportResponse, MessageRequest, MessageResponse, ReportStatus, SenderType
+from app.schemas.report import CreateReportRequest, CredentialsResponse, MessageRequest, MessageResponse, ReportResponse, SessionAuthRequest
 from app.services.report_engine import ReportEngine
 
 router = APIRouter()
 
-@router.post("/create", response_model=ReportResponse)
-async def create_report(
-    request: CreateReportRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Initialize a new anonymous report session in Supabase.
-    """
-    # Generate a unique session ID
-    report_id = str(uuid.uuid4())
-    # For now, we'll use a mocked token associated with the ID.
-    access_token = f"tk_{uuid.uuid4().hex[:12]}"
 
-    # Initialize report in local storage
-    try:
-        await ReportEngine.initialize_report(report_id, access_token)
-    except Exception as e:
-        error_msg = f"DB_ERROR: {str(e)[:200]}"
-        raise HTTPException(status_code=500, detail=error_msg)
-    
-    return ReportResponse(
-        report_id=uuid.UUID(report_id),
-        access_token=access_token,
-        message="Secure session established. Speak freely, I am listening."
-    )
+@router.post("/create", response_model=ReportResponse, dependencies=[Depends(limit("create_report"))])
+async def create_report(
+    _body: CreateReportRequest = Body(default_factory=CreateReportRequest), db: AsyncSession = Depends(get_db)
+) -> ReportResponse:
+    """Start an anonymous reporting session. Returns the session id and its (secret) access token."""
+    report_id, token = await ReportEngine.create_session(db)
+    return ReportResponse(report_id=report_id, access_token=token, message="Secure session established. Speak freely, I am listening.")
+
 
 @router.post("/message", response_model=MessageResponse)
-async def handle_message(
-    request: MessageRequest,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Handle incoming user message via the real ReportEngine/AI flow.
-    """
-    # Verify access token (Mocked for now)
-    if not request.access_token.startswith("tk_"):
-        raise HTTPException(status_code=401, detail="Invalid access token")
+async def send_message(
+    payload: MessageRequest,
+    request: Request,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """One chat turn. The reply is only returned (and stored) when it was actually produced - failures return an
+    error status so the client can offer a retry instead of showing a fake assistant message."""
+    enforce("send_message", request, extra_key=str(payload.report_id))
+    report = await ReportEngine.authenticate(db, payload.report_id, payload.access_token)
+    return await ReportEngine.process_message(db, report, payload.content, background)
 
-    try:
-        # Process message via ReportEngine
-        # This handles: Local history, LLM interaction, and Phase 1 Supabase INSERT on completion
-        response = await ReportEngine.process_message(
-            report_id=str(request.report_id),
-            user_message=request.content,
-            supabase_session=db,
-            background_tasks=background_tasks
+
+@router.post("/credentials", response_model=CredentialsResponse)
+async def pending_credentials(payload: SessionAuthRequest, request: Request, db: AsyncSession = Depends(get_db)) -> CredentialsResponse:
+    """Re-fetch the Case ID / Secret Key of a just-submitted report if the original response was lost.
+
+    Available only until the reporter acknowledges they saved them (or 24 h pass)."""
+    enforce("send_message", request, extra_key=str(payload.report_id))
+    report = await ReportEngine.authenticate(db, payload.report_id, payload.access_token)
+    credentials = await ReportEngine.pending_credentials(db, report.id)
+    if credentials is None:
+        raise AppError(
+            404, "credentials_not_available", "The credentials are no longer available. Use the Case ID and Secret Key you saved."
         )
+    return credentials
 
-        # Safety: Ensure content is never empty
-        if not response.content or not response.content.strip():
-            response.content = "I'm listening. Please describe the incident you'd like to report, including the date and location."
-        
-        return response
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Error in handle_message: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error. Please try again.")
+
+@router.post("/credentials/ack", status_code=204)
+async def acknowledge_credentials(payload: SessionAuthRequest, request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+    """The reporter confirms they saved their credentials; the server-side copy is deleted."""
+    enforce("send_message", request, extra_key=str(payload.report_id))
+    report = await ReportEngine.authenticate(db, payload.report_id, payload.access_token)
+    await ReportEngine.acknowledge_credentials(db, report.id)
+    return Response(status_code=204)

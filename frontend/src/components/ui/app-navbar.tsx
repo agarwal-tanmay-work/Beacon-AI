@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimeNavBar } from "@/components/ui/anime-navbar";
-import { Home, ShieldCheck, Activity, Info } from "lucide-react";
+import { Home, ShieldCheck, Activity } from "lucide-react";
 
 import { usePathname } from "next/navigation";
 

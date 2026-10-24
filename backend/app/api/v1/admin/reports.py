@@ -1,388 +1,199 @@
-from fastapi import APIRouter, Depends, Body, BackgroundTasks
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
-from typing import List
-import uuid
+"""Case management for investigators."""
 
+from typing import Any
+from uuid import UUID
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
+from pydantic import BaseModel
+from sqlalchemy import desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
+
+from app.api.deps import get_current_admin
+from app.api.uploads import store_upload, validate_upload
+from app.api.v1.public.tracking import message_to_schema, validate_attachments
+from app.core.exceptions import AppError
+from app.core.time_utils import utc_now
 from app.db.session import get_db
 from app.models.beacon import Beacon
-# We need a schema that matches what the frontend expects.
-# The frontend Interface Report has: id, status, priority, credibility_score, created_at
-from pydantic import BaseModel, validator
-from datetime import datetime, timezone
-from app.models.beacon_update import BeaconUpdate
 from app.models.beacon_message import BeaconMessage
-from app.schemas.report import TrackMessage, MessageAttachment, TrackMessageRequest, SecureUploadResponse
-from fastapi import UploadFile, File, Form, HTTPException
-import os
-import hashlib
-from typing import List, Optional, Any
-from app.api.deps import get_current_admin
-from app.services.storage_service import StorageService
+from app.models.beacon_update import BeaconUpdate
+from app.models.report import Report
+from app.schemas.report import (
+    AdminMessageRequest,
+    AdminReportSchema,
+    CaseUpdateSchema,
+    SecureUploadResponse,
+    TrackMessage,
+    UpdateStatusRequest,
+    UTCDateTime,
+)
+from app.services.scoring_rules import confidence_band, priority_for
 from app.services.scoring_service import ScoringService
+from app.services.storage_service import StorageService
 
 router = APIRouter(dependencies=[Depends(get_current_admin)])
 
 
-class CaseUpdateSchema(BaseModel):
-    id: str
-    public_update: str
-    created_at: Any
-    updated_by: str
-
-    @validator("created_at", pre=True)
-    def ensure_utc(cls, v):
-        if isinstance(v, datetime):
-            if v.tzinfo is None: v = v.replace(tzinfo=timezone.utc)
-            return v.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        return v
-
-class AdminReportSchema(BaseModel):
-    id: uuid.UUID
+class AdminReportListItem(BaseModel):
+    id: UUID
+    case_id: str
     status: str
     priority: str
-    credibility_score: Optional[int] = None
-    created_at: Any
-    case_id: str
-    incident_summary: Optional[str] = None
-    ai_summary: Optional[str] = None
-    ai_explanation: Optional[dict] = None
-    analysis_status: Optional[str] = "pending"
-    admin_summary: Optional[str] = None
-    app_score_explanation: Optional[str] = None
-    evidence_files: Optional[List[dict]] = []
-    updates: Optional[List[CaseUpdateSchema]] = []
-    
-    @validator("created_at", pre=True)
-    def ensure_utc(cls, v):
-        if isinstance(v, datetime):
-            if v.tzinfo is None: v = v.replace(tzinfo=timezone.utc)
-            return v.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        return v
+    credibility_score: int | None = None
+    confidence: str | None = None
+    analysis_status: str | None = None
+    created_at: UTCDateTime
 
-    class Config:
-        from_attributes = True
 
-class UpdateStatusRequest(BaseModel):
-    status: str
+def display_status(case: Beacon) -> str:
+    return "Pending" if case.status == "Received" else case.status
 
-@router.get("/", response_model=List[AdminReportSchema])
-async def get_reports(
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Fetch all reports for the admin dashboard.
-    """
-    query = select(Beacon).order_by(desc(Beacon.reported_at))
-    result = await db.execute(query)
-    beacons = result.scalars().all()
-    
-    reports_data = []
-    for b in beacons:
-        # Status Logic
-        raw_status = b.status
-        if raw_status == "Received":
-            status = "Pending"
-        else:
-            status = raw_status
-        
-        # Priority Logic
-        score = b.credibility_score
-        if score is None:
-            priority = "Pending"
-        elif score >= 75:
-            priority = "High"
-        elif score >= 40:
-            priority = "Medium"
-        else:
-            priority = "Low"
 
-        # Evidence files handling
-        evidence = []
-        if b.evidence_files:
-            # It's stored as JSON list of dicts
-            evidence = b.evidence_files
+def evidence_for_admin(entry: dict[str, Any]) -> dict[str, Any]:
+    """Evidence record as shown to investigators: a short-lived signed link, never the storage reference."""
+    ref = entry.get("file_path", "")
+    return {
+        "file_name": entry.get("file_name", "file"),
+        "mime_type": entry.get("mime_type"),
+        "size_bytes": entry.get("size_bytes", 0),
+        "full_url": StorageService.signed_path(ref) if ref else None,
+        "kind": entry.get("kind"),
+        "summary": entry.get("summary"),
+        "analyzed": entry.get("analyzed", False),
+        "quality_notes": entry.get("quality_notes", []),
+    }
 
-        reports_data.append(AdminReportSchema(
-            id=b.id,
-            status=status,
-            priority=priority,
-            credibility_score=score,
-            created_at=b.reported_at,
-            case_id=b.case_id,
-            incident_summary=b.incident_summary,
-            ai_summary=getattr(b, "ai_summary", None),
-            ai_explanation=getattr(b, "ai_explanation", None),
-            analysis_status=getattr(b, "analysis_status", "pending"),
-            app_score_explanation=b.score_explanation,
-            admin_summary=getattr(b, "admin_summary", None),
-            evidence_files=evidence
-        ))
 
-    return reports_data
-
-@router.get("/{id}", response_model=AdminReportSchema)
-async def get_report_detail(
-    id: uuid.UUID,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Fetch full detail for a single report.
-    """
-    case = await db.get(Beacon, id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    # Status Logic
-    raw_status = case.status
-    if raw_status == "Received":
-        status = "Pending"
-    else:
-        status = raw_status
-    
-    # Priority Logic
+def to_admin_schema(case: Beacon, updates: list[BeaconUpdate] | None = None) -> AdminReportSchema:
     score = case.credibility_score
-    if score is None:
-        priority = "Pending"
-    elif score >= 75:
-        priority = "High"
-    elif score >= 40:
-        priority = "Medium"
-    else:
-        priority = "Low"
-
-    evidence = []
-    if case.evidence_files:
-        evidence = case.evidence_files
-
-    # Fetch Updates
-    updates_stmt = select(BeaconUpdate).where(
-        BeaconUpdate.case_id == case.case_id
-    ).order_by(BeaconUpdate.created_at.asc())
-    updates_result = await db.execute(updates_stmt)
-    updates_objs = updates_result.scalars().all()
-    
-    updates_data = []
-    for u in updates_objs:
-        updates_data.append({
-            "id": str(u.id),
-            "public_update": u.public_update,
-            "created_at": u.created_at,
-            "updated_by": "Admin" # Updated from NGO/Authority to reflect broader administrative role
-        })
-
     return AdminReportSchema(
         id=case.id,
-        status=status,
-        priority=priority,
-        credibility_score=score,
-        created_at=case.reported_at,
         case_id=case.case_id,
-        incident_summary=case.incident_summary,
-        ai_summary=getattr(case, "ai_summary", None),
-        ai_explanation=getattr(case, "ai_explanation", None),
-        analysis_status=getattr(case, "analysis_status", "pending"),
-        app_score_explanation=case.score_explanation,
-        admin_summary=getattr(case, "admin_summary", None),
-        evidence_files=evidence,
-        updates=updates_data
-    )
-
-@router.put("/{id}/status", response_model=AdminReportSchema)
-async def update_report_status(
-    id: uuid.UUID,
-    request: UpdateStatusRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Update the status of a report.
-    Valid statuses: Pending, Ongoing, Completed
-    """
-    case = await db.get(Beacon, id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    valid_statuses = ["Pending", "Ongoing", "Completed"]
-    if request.status not in valid_statuses:
-        raise HTTPException(status_code=400, detail="Invalid status. Must be Pending, Ongoing, or Completed.")
-    
-    case.status = request.status
-    # If explicitly setting to Pending, we store "Pending" (db default was "Received" but "Pending" is fine now)
-    
-    await db.commit()
-    await db.refresh(case)
-    
-    # Return updated schema
-    score = case.credibility_score or 0
-    if score >= 75:
-        priority = "High"
-    elif score >= 40:
-        priority = "Medium"
-    else:
-        priority = "Low"
-
-    return AdminReportSchema(
-        id=case.id,
-        status=case.status,
-        priority=priority,
+        status=display_status(case),
+        priority=priority_for(score),
         credibility_score=score,
+        confidence=None if score is None else confidence_band(score),
         created_at=case.reported_at,
-        case_id=case.case_id
+        incident_summary=case.incident_summary,
+        ai_summary=case.ai_summary,
+        ai_explanation=case.ai_explanation,
+        analysis_status=case.analysis_status,
+        app_score_explanation=case.score_explanation,
+        reporter_details=case.reporter_details,
+        evidence_files=[evidence_for_admin(e) for e in (case.evidence_files or [])],
+        updates=[
+            CaseUpdateSchema(id=str(u.id), public_update=u.public_update, created_at=u.created_at, updated_by="Admin")
+            for u in (updates or [])
+        ],
     )
 
-@router.get("/{id}/messages", response_model=List[TrackMessage])
-async def get_case_messages(
-    id: uuid.UUID,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Fetch all messages for a specific case by its UUID.
-    """
-    case = await db.get(Beacon, id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-        
-    stmt = select(BeaconMessage).where(
-        BeaconMessage.case_id == case.case_id
-    ).order_by(BeaconMessage.created_at.asc())
-    
-    result = await db.execute(stmt)
-    messages = result.scalars().all()
-    
+
+async def get_case(db: AsyncSession, case_uuid: UUID) -> Beacon:
+    case = await db.get(Beacon, case_uuid)
+    if case is None:
+        raise AppError(404, "case_not_found", "Case not found.")
+    return case
+
+
+@router.get("/", response_model=list[AdminReportListItem])
+async def list_reports(
+    limit: int = Query(default=300, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+) -> list[AdminReportListItem]:
+    rows = (
+        await db.execute(
+            select(Beacon)
+            .options(
+                load_only(Beacon.id, Beacon.case_id, Beacon.status, Beacon.credibility_score, Beacon.analysis_status, Beacon.reported_at)
+            )
+            .order_by(desc(Beacon.reported_at))
+            .limit(limit)
+            .offset(offset)
+        )
+    ).scalars()
     return [
-        TrackMessage(
-            id=str(msg.id),
-            sender_role=msg.sender_role,
-            content=msg.content,
-            attachments=[
-                MessageAttachment(
-                    file_name=att.get("file_name"),
-                    file_path=StorageService.get_public_url(att.get("file_path", "")),
-                    mime_type=att.get("mime_type")
-                ) for att in (msg.attachments or [])
-            ],
-            timestamp=msg.created_at
-        ) for msg in messages
+        AdminReportListItem(
+            id=case.id,
+            case_id=case.case_id,
+            status=display_status(case),
+            priority=priority_for(case.credibility_score),
+            credibility_score=case.credibility_score,
+            confidence=None if case.credibility_score is None else confidence_band(case.credibility_score),
+            analysis_status=case.analysis_status,
+            created_at=case.reported_at,
+        )
+        for case in rows
     ]
 
-@router.post("/{id}/message", response_model=TrackMessage)
-async def admin_send_message(
-    id: uuid.UUID,
-    request: TrackMessageRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Admin sends a message to the user.
-    """
-    case = await db.get(Beacon, id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-        
-    new_message = BeaconMessage(
-        case_id=case.case_id,
-        sender_role="admin",
-        content=request.content,
-        attachments=[att.model_dump() for att in request.attachments]
+
+@router.get("/{case_uuid}", response_model=AdminReportSchema)
+async def get_report(case_uuid: UUID, db: AsyncSession = Depends(get_db)) -> AdminReportSchema:
+    case = await get_case(db, case_uuid)
+    updates = (
+        (await db.execute(select(BeaconUpdate).where(BeaconUpdate.case_id == case.case_id).order_by(BeaconUpdate.created_at)))
+        .scalars()
+        .all()
     )
-    db.add(new_message)
+    return to_admin_schema(case, list(updates))
+
+
+@router.put("/{case_uuid}/status", response_model=AdminReportSchema)
+async def update_status(case_uuid: UUID, payload: UpdateStatusRequest, db: AsyncSession = Depends(get_db)) -> AdminReportSchema:
+    case = await get_case(db, case_uuid)
+    case.status = payload.status
+    case.last_updated_at = utc_now()
     await db.commit()
-    await db.refresh(new_message)
-    
-    return TrackMessage(
-        id=str(new_message.id),
-        sender_role=new_message.sender_role,
-        content=new_message.content,
-        attachments=[
-            MessageAttachment(
-                file_name=att.get("file_name"),
-                file_path=StorageService.get_public_url(att.get("file_path", "")),
-                mime_type=att.get("mime_type")
-            ) for att in (new_message.attachments or [])
-        ],
-        timestamp=new_message.created_at
+    return to_admin_schema(case)
+
+
+@router.get("/{case_uuid}/messages", response_model=list[TrackMessage])
+async def list_messages(case_uuid: UUID, db: AsyncSession = Depends(get_db)) -> list[TrackMessage]:
+    case = await get_case(db, case_uuid)
+    messages = (
+        await db.execute(select(BeaconMessage).where(BeaconMessage.case_id == case.case_id).order_by(BeaconMessage.created_at))
+    ).scalars()
+    return [message_to_schema(m) for m in messages]
+
+
+@router.post("/{case_uuid}/message", response_model=TrackMessage)
+async def send_message(case_uuid: UUID, payload: AdminMessageRequest, db: AsyncSession = Depends(get_db)) -> TrackMessage:
+    case = await get_case(db, case_uuid)
+    if not payload.content and not payload.attachments:
+        raise AppError(422, "empty_message", "Please write a message or attach a file.")
+    attachments = validate_attachments(payload.attachments, f"admin/{case.case_id}")
+    message = BeaconMessage(case_id=case.case_id, sender_role="admin", content=payload.content, attachments=attachments)
+    db.add(message)
+    case.last_updated_at = utc_now()
+    await db.commit()
+    return message_to_schema(message)
+
+
+@router.post("/{case_uuid}/upload", response_model=SecureUploadResponse)
+async def upload_file(case_uuid: UUID, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)) -> SecureUploadResponse:
+    case = await get_case(db, case_uuid)
+    upload = await validate_upload(file)
+    stored = await store_upload(upload, f"admin/{case.case_id}")
+    return SecureUploadResponse(
+        file_name=upload.display_name, file_path=stored.ref, mime_type=upload.detected.mime, size_bytes=len(upload.content)
     )
 
-@router.post("/{id}/upload", response_model=SecureUploadResponse)
-async def upload_admin_file(
-    id: uuid.UUID,
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Upload a file for the Admin communication channel.
-    """
-    case = await db.get(Beacon, id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-        
-    try:
-        from app.core.config import settings
-        
-        content = await file.read()
-        
-        # Cloud-Only Storage (Supabase)
-        try:
-            upload_res = await StorageService.upload_file(content, file.filename, file.content_type or "application/octet-stream")
-            file_path = f"supastorage://{upload_res['bucket']}/{upload_res['path']}"
-        except Exception as sup_err:
-            print(f"[ADMIN_UPLOAD] Supabase upload failed: {sup_err}")
-            raise HTTPException(status_code=503, detail="Cloud storage unavailable. Attachment failed.")
-        
-        return SecureUploadResponse(
-            file_name=file.filename,
-            file_path=StorageService.get_public_url(file_path),
-            mime_type=file.content_type or "application/octet-stream"
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
 
-@router.post("/{id}/analyze", status_code=202)
-async def trigger_reanalysis(
-    id: uuid.UUID,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Manually trigger or re-run the background scoring analysis.
-    Useful for cases that failed due to rate limits or decommissioning.
-    """
-    case = await db.get(Beacon, id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-        
-    # Reset analysis status so it doesn't look stuck if it was 'pending' but errored
+@router.post("/{case_uuid}/analyze", status_code=202)
+async def reanalyze(case_uuid: UUID, background: BackgroundTasks, db: AsyncSession = Depends(get_db)) -> dict[str, str]:
+    """Re-run the AI analysis (for cases that failed during an outage or on a retired model)."""
+    case = await get_case(db, case_uuid)
+    case_id = case.case_id
+    if ScoringService.is_running(case_id):
+        return {"message": "Analysis is already running for this case.", "case_id": case_id}
+
+    report_id = (await db.execute(select(Report.id).where(Report.case_id == case_id))).scalar_one_or_none()
+    if report_id is None:
+        raise AppError(404, "session_not_found", "The original reporting session for this case could not be found.")
+
     case.analysis_status = "pending"
     case.analysis_attempts = 0
     await db.commit()
-    
-    # Need to find report_id in Supabase Report record (staging metadata)
-    from sqlalchemy import select
-    from app.models.report import Report
-    
-    # report_id is the primary key of the Report table in Supabase
-    report_id = None
-    stmt_rep = select(Report).where(Report.case_id == case.case_id)
-    res_rep = await db.execute(stmt_rep)
-    report_rec = res_rep.scalar_one_or_none()
-    
-    if report_rec:
-        report_id = str(report_rec.id)
-    else:
-        # Fallback: search for Evidence to find report_id
-        from app.models.report import Evidence
-        stmt_ev = select(Evidence).where(Evidence.case_id == case.case_id)
-        res_ev = await db.execute(stmt_ev)
-        ev_rec = res_ev.scalar_one_or_none()
-        if ev_rec:
-            report_id = str(ev_rec.report_id)
-            
-    if not report_id:
-        raise HTTPException(status_code=404, detail="Original reporting session data not found for this case. Evidence or history may be missing.")
-    
-    # Trigger background task
-    # Signature: run_background_scoring(session_id: str, case_id: str)
-    background_tasks.add_task(ScoringService.run_background_scoring, report_id, case.case_id)
-    
-    return {"message": "Analysis triggered manually", "case_id": case.case_id}
+    background.add_task(ScoringService.run_background_scoring, str(report_id), case_id)
+    return {"message": "Analysis queued.", "case_id": case_id}

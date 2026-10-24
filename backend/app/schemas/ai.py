@@ -1,131 +1,142 @@
+"""Shapes exchanged with the LLM.
+
+These models double as (a) the JSON Schema sent to Gemini and (b) the lenient validators for what
+comes back. Anything the server can compute itself (totals, confidence band, disclaimers) is NOT part of
+the LLM output, so the model cannot get it wrong.
+"""
+
+from typing import Any, Literal
+
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Dict, Any
-from enum import Enum
 
-# --- Forensic OCR Analysis Schema ---
+FACT_FIELDS = ("what", "where", "when", "who", "evidence", "contact_info", "other_details")
+BASIC_FIELDS = ("what", "where", "when", "who")
+SKIPPED = "SKIPPED"  # the reporter chose not to / could not answer
+ASKED_ABOUT_VALUES = [*FACT_FIELDS, "none"]
 
-class KeyElementsResults(BaseModel):
-    dates: List[str] = Field(default_factory=list)
-    amounts: List[str] = Field(default_factory=list)
-    names: List[str] = Field(default_factory=list)
-    locations: List[str] = Field(default_factory=list)
-    official_markers: List[str] = Field(default_factory=list)
 
-class ForensicOCRAnalysis(BaseModel):
-    ocr_available: bool
-    ocr_text_quality: str = Field(..., description="high | medium | low")
-    key_elements_detected: KeyElementsResults
-    narrative_alignment: str = Field(..., description="none | partial | strong")
-    objective_notes: List[str]
-    limitations: Optional[List[str]] = Field(default_factory=list)
+def _as_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list | tuple):
+        return "; ".join(_as_text(v) for v in value if _as_text(v))
+    return str(value).strip()
 
-    @field_validator("objective_notes", "limitations", mode="before")
+
+# ======================================================================================
+# Conversational intake
+# ======================================================================================
+class ExtractedFacts(BaseModel):
+    what: str = ""
+    where: str = ""
+    when: str = ""
+    who: str = ""
+    evidence: str = ""
+    contact_info: str = ""
+    other_details: str = ""
+
+    @field_validator(*FACT_FIELDS, mode="before")
     @classmethod
-    def ensure_list(cls, v):
-        if isinstance(v, str):
-            return [v] if v.strip() else []
-        if v is None:
-            return []
-        return v
+    def _coerce(cls, value: Any) -> str:
+        return _as_text(value)
 
-# --- Forensic Audio/Video Analysis Schema ---
 
-class AudioKeyElements(BaseModel):
-    dates: List[str] = Field(default_factory=list)
-    amounts: List[str] = Field(default_factory=list)
-    names: List[str] = Field(default_factory=list)
-    locations: List[str] = Field(default_factory=list)
-    references: List[str] = Field(default_factory=list, description="References to documents, payments, official actions")
+class ChatTurn(BaseModel):
+    """One assistant turn: what to say, what was learned, what was asked, and whether to submit."""
 
-class ForensicAudioAnalysis(BaseModel):
-    transcription_available: bool
-    audio_clarity: str = Field(..., description="high | medium | low")
-    key_elements_detected: AudioKeyElements
-    narrative_alignment: str = Field(..., description="none | partial | strong")
-    objective_notes: List[str]
-    limitations: Optional[List[str]] = Field(default_factory=list)
+    reply: str
+    extracted: ExtractedFacts = Field(default_factory=ExtractedFacts)
+    asked_about: str = Field(default="none", json_schema_extra={"enum": ASKED_ABOUT_VALUES})
+    ready_to_submit: bool = False
 
-    @field_validator("objective_notes", "limitations", mode="before")
+    @field_validator("reply", mode="before")
     @classmethod
-    def ensure_list(cls, v):
-        if isinstance(v, str):
-            return [v] if v.strip() else []
-        if v is None:
-            return []
-        return v
+    def _reply_text(cls, value: Any) -> str:
+        text = _as_text(value)
+        if not text:
+            raise ValueError("reply must not be empty")
+        return text
 
-# --- Layer 1: Deterministic Evidence Flags ---
+    @field_validator("asked_about", mode="before")
+    @classmethod
+    def _known_field(cls, value: Any) -> str:
+        text = _as_text(value).lower()
+        return text if text in ASKED_ABOUT_VALUES else "none"
 
-class EvidenceType(str, Enum):
+
+# ======================================================================================
+# Evidence
+# ======================================================================================
+class EvidenceKind:
     IMAGE = "image"
     AUDIO = "audio"
-    VIDEO = "video"
     DOCUMENT = "document"
     UNKNOWN = "unknown"
 
-class EvidenceMetadata(BaseModel):
+
+class ImageAnalysis(BaseModel):
+    """Single vision call per image: what it shows and any text in it (replaces separate OCR + scene calls)."""
+
+    description: str = Field(description="One or two neutral sentences: people/roles, setting, key objects (cash, documents, badges).")
+    visible_text: str = Field(description="All legible text, verbatim, in reading order. Empty string if there is none.")
+    legible: bool = Field(description="False if the image is too blurry, dark or small to be useful as evidence.")
+
+    @field_validator("description", "visible_text", mode="before")
+    @classmethod
+    def _text(cls, value: Any) -> str:
+        return _as_text(value)
+
+
+class EvidenceDigest(BaseModel):
+    """What the credibility scorer is told about one uploaded file."""
+
     file_name: str
-    file_path: str
-    file_type: EvidenceType
-    
-    # Deterministic Flags
-    is_empty_or_corrupt: bool = False
-    is_duplicate: bool = False
-    file_hash: Optional[str] = None
-    file_size: Optional[int] = None
-    
-    # Extraction Results
-    ocr_text_snippet: Optional[str] = Field(None, description="First 500 chars of extracted text (if any)")
-    object_labels: List[str] = Field(default_factory=list, description="Detected objects (e.g. ['invoice', 'cash'])")
-    audio_transcript_snippet: Optional[str] = Field(None, description="First 500 chars of transcript")
-    
-    # Forensic Analysis (Layer 2)
-    forensic_analysis: Optional[ForensicOCRAnalysis] = None
-    forensic_audio_analysis: Optional[ForensicAudioAnalysis] = None
-    
-    # Relevance Signal (Still deterministic-ish heuristic, or simple keyword match)
-    has_relevant_keywords: bool = False
+    kind: str = EvidenceKind.UNKNOWN
+    status: Literal["valid", "duplicate", "corrupt"] = "valid"
+    description: str = ""
+    extracted_text: str = ""
+    transcript: str = ""
+    quality_notes: list[str] = Field(default_factory=list)
+    analysis_available: bool = True
 
-# --- Layer 2: LLM Reasoning Output ---
 
-class NarrativeCredibilityScore(BaseModel):
-    score: int = Field(..., ge=0, le=40, description="0-40 score for consistency and details")
-    # No strict Enums for reasons, just strings
-    reasoning: List[str]
+# ======================================================================================
+# Credibility scoring
+# ======================================================================================
+class SubScore(BaseModel):
+    score: int = Field(ge=0, le=100, description="Points awarded within this dimension's maximum.")
+    reasoning: list[str] = Field(default_factory=list)
 
-class EvidenceStrengthScore(BaseModel):
-    score: int = Field(..., ge=0, le=40, description="0-40 score for evidence alignment")
-    reasoning: List[str]
+    @field_validator("reasoning", mode="before")
+    @classmethod
+    def _list(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        return [str(v) for v in value or []]
 
-class BehavioralReliabilityScore(BaseModel):
-    score: int = Field(..., ge=0, le=20, description="0-20 score for interaction quality")
-    reasoning: List[str]
 
 class ScoringResult(BaseModel):
-    credibility_score: int = Field(..., ge=0, le=100)
-    
-    # Subscores
-    narrative_credibility: NarrativeCredibilityScore
-    evidence_strength: EvidenceStrengthScore
-    behavioral_reliability: BehavioralReliabilityScore
-    
-    rationale: List[str] = Field(..., description="Objective, bullet-point explanation")
-    confidence_level: str = Field(..., description="Low / Medium / High")
-    
-    limitations: Optional[List[str]] = Field(default_factory=list, description="What could not be verified")
-    final_safety_statement: str = Field(..., description="Mandatory disclaimer")
+    narrative_credibility: SubScore = Field(description="0-40")
+    evidence_strength: SubScore = Field(description="0-40")
+    behavioral_reliability: SubScore = Field(description="0-20")
+    rationale: list[str] = Field(description="Objective plain-language explanation points.")
+    limitations: list[str] = Field(description="What could not be verified.")
 
     @field_validator("rationale", "limitations", mode="before")
     @classmethod
-    def ensure_list(cls, v):
-        if isinstance(v, str):
-            return [v] if v.strip() else []
-        if v is None:
-            return []
-        return v
+    def _list(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        return [str(v) for v in value or []]
 
-class AIAnalysisResult(BaseModel):
-    summary: str
-    entities: List[str]
-    detected_language: str
-    corruption_type_confidence: str
+
+class FinalScore(BaseModel):
+    """ScoringResult after server-side validation: bounded sub-scores, recomputed total and band."""
+
+    total: int
+    narrative: int
+    evidence: int
+    behavioral: int
+    confidence: Literal["Low", "Medium", "High"]
+    rationale: list[str]
+    limitations: list[str]

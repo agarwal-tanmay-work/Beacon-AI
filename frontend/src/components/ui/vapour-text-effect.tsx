@@ -162,12 +162,13 @@ export default function VaporizeTextCycle({
             }, 0);
             return () => clearTimeout(startAnimationTimeout);
         } else {
-            // When component goes out of view, reset to static state
-            setAnimationState("static");
+            // When component goes out of view, reset to static state (deferred: no synchronous setState in an effect)
+            const resetTimeout = setTimeout(() => setAnimationState("static"), 0);
             if (animationFrameRef.current) {
                 cancelAnimationFrame(animationFrameRef.current);
                 animationFrameRef.current = null;
             }
+            return () => clearTimeout(resetTimeout);
         }
     }, [isInView]);
 
@@ -559,11 +560,11 @@ const createParticles = (
     ctx.imageSmoothingEnabled = true;
 
     if ('fontKerning' in ctx) {
-        (ctx as Record<string, any>).fontKerning = "normal";
+        (ctx as unknown as Record<string, string>).fontKerning = "normal";
     }
 
     if ('textRendering' in ctx) {
-        (ctx as Record<string, any>).textRendering = "geometricPrecision";
+        (ctx as unknown as Record<string, string>).textRendering = "geometricPrecision";
     }
 
     // Calculate text boundaries

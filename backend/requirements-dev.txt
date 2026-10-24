@@ -1,0 +1,11 @@
+-r requirements.txt
+
+# Test + lint tooling
+pytest==9.1.1
+pytest-asyncio==1.4.0
+aiosqlite==0.22.1
+ruff==0.17.2
+
+# Only used to generate / verify hashes that were produced by the old passlib-based
+# code, so legacy secret-key hashes keep working. Not needed at runtime.
+passlib==1.7.4

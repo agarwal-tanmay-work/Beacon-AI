@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Inbox, CheckCircle, Clock, Shield, LogOut } from "lucide-react";
+import { CheckCircle, Clock, Inbox, LayoutDashboard, LogOut, Shield } from "lucide-react";
 import { clsx } from "clsx";
+import { clearSession } from "@/lib/auth";
 
 const navigation = [
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -21,48 +22,31 @@ export function Sidebar() {
                 <Shield className="h-8 w-8 text-primary mr-2" />
                 <span className="text-lg font-bold tracking-tight text-white">Beacon Admin</span>
             </div>
-            <nav className="flex flex-1 flex-col px-4 py-6 gap-1">
+            <nav className="flex flex-1 flex-col px-4 py-6 gap-1" aria-label="Main">
                 {navigation.map((item) => {
                     const isActive = pathname === item.href;
                     return (
                         <Link
                             key={item.name}
                             href={item.href}
+                            aria-current={isActive ? "page" : undefined}
                             className={clsx(
-                                isActive
-                                    ? "bg-primary/10 text-primary"
-                                    : "text-muted-foreground hover:bg-white/5 hover:text-white",
-                                "group flex gap-x-3 rounded-md p-2 text-sm font-semibold leading-6 transition-colors"
+                                isActive ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-white/5 hover:text-white",
+                                "group flex gap-x-3 rounded-md p-2 text-sm font-semibold leading-6 transition-colors",
                             )}
                         >
-                            <item.icon
-                                className={clsx(
-                                    isActive ? "text-primary" : "text-muted-foreground group-hover:text-white",
-                                    "h-5 w-5 shrink-0"
-                                )}
-                                aria-hidden="true"
-                            />
+                            <item.icon className={clsx(isActive ? "text-primary" : "text-muted-foreground group-hover:text-white", "h-5 w-5 shrink-0")} aria-hidden="true" />
                             {item.name}
                         </Link>
                     );
                 })}
             </nav>
             <div className="p-4 border-t border-border">
-                <div className="flex items-center gap-3 mb-4">
-                    <div className="h-8 w-8 rounded-full bg-accent/20 flex items-center justify-center">
-                        <span className="text-xs font-bold text-accent">AD</span>
-                    </div>
-                    <div className="flex flex-col">
-                        <span className="text-sm font-medium text-white">Admin User</span>
-                        <span className="text-xs text-muted-foreground">Secure Access</span>
-                    </div>
-                </div>
-
                 <button
+                    type="button"
                     onClick={() => {
-                        sessionStorage.removeItem("admin_token");
-                        sessionStorage.removeItem("admin_user");
-                        window.location.href = "/login";
+                        clearSession();
+                        window.location.replace("/login");
                     }}
                     className="flex w-full items-center gap-x-3 rounded-md p-2 text-sm font-semibold leading-6 text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
                 >

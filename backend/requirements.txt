@@ -1,26 +1,27 @@
-fastapi
-uvicorn[standard]
-pydantic[email]
-pydantic-settings
-sqlalchemy[asyncio]
-asyncpg
-aiosqlite
-python-multipart
-python-jose[cryptography]
-passlib[bcrypt]
-structlog
-alembic
-httpx
-opencv-python-headless
-pymupdf
-python-magic
-pandas
-numpy
-supabase
-pytesseract
-dnspython
-pytz
-termcolor
+# Runtime dependencies (pinned so a fresh Render build can never silently pick up a
+# breaking major release - see the SQLAlchemy 2.1 / greenlet incident in git history).
+# Upgrade deliberately: bump a version, run `pytest`, then deploy.
 
+fastapi==0.161.1
+uvicorn[standard]==0.54.0
+pydantic==2.14.1
+pydantic-settings==2.16.1
+python-multipart==0.0.32
 
+# Database (Supabase PostgreSQL via asyncpg; the [asyncio] extra pulls in greenlet)
+sqlalchemy[asyncio]==2.1.6
+asyncpg==0.32.0
+dnspython==2.9.0
 
+# Auth / crypto
+PyJWT==2.15.1
+bcrypt==5.0.0
+
+# HTTP + logging
+httpx==0.28.1
+structlog==26.1.0
+
+# Evidence processing (PDF text, image handling, optional local OCR fallback)
+pymupdf==2.0
+Pillow==13.0.0
+pytesseract==0.3.13

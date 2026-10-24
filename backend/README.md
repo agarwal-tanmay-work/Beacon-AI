@@ -1,41 +1,18 @@
-# Beacon AI Backend
+# Beacon AI backend
 
-## Setup & Run
+FastAPI service. Full documentation (configuration, deployment, security model) is in the [root README](../README.md).
 
-1.  **Navigate to backend directory**:
-    ```bash
-    cd backend
-    ```
+```bash
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
+cp .env.example backend_config.env                     # edit it
+uvicorn app.main:app --reload --port 8000
+pytest                                                 # runs against a fake Gemini API; no network or keys needed
+ruff check app tests
+python -m app.tools.hash_password                      # create an ADMIN_PASSWORD_HASH
+```
 
-2.  **Create Virtual Environment** (Optional but recommended):
-    ```bash
-    python -m venv venv
-    .\venv\Scripts\Activate.ps1
-    ```
+Health check: `GET /health` → `{"status":"ok","db":"connected","ai":"ok"}` (`ai` is one of `ok`, `unknown`, `degraded`, `key_invalid`, `unconfigured`).
 
-3.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-4.  **Environment Variables**:
-    Copy `.env.example` to `.env` and update values.
-    ```bash
-    cp .env.example .env
-    ```
-    *Note: You need a running PostgreSQL instance for the app to start fully (database connection check).*
-
-5.  **Initialize Database**:
-    ```bash
-    python -m app.init_db
-    ```
-
-6.  **Run Application**:
-    ```bash
-    python -m app.main
-    ```
-    The API will be available at `http://localhost:8000`.
-    Docs: `http://localhost:8000/api/v1/docs`
-
-6.  **Health Check**:
-    GET `http://localhost:8000/health`
+Key modules: `app/services/gemini/` (client, model fallback chain, circuit breaker), `app/services/chat_agent.py` (AI + basic mode),
+`app/services/report_engine.py` (session → submission), `app/services/scoring_service.py` + `maintenance.py` (background analysis and self-healing).

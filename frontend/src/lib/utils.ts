@@ -5,54 +5,31 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatToIST(date: string | Date | number, options: Intl.DateTimeFormatOptions = {}) {
-  if (!date) return "";
+/** Parses API timestamps. The backend sends UTC ("...Z"); strings without a zone are treated as UTC too. */
+function parseTimestamp(value: string | Date | number): Date {
+  if (typeof value !== "string") return new Date(value);
+  let text = value.trim();
+  if (text.includes(" ") && !text.includes("T")) text = text.replace(" ", "T");
+  const hasZone = /Z|[+-]\d{2}:?\d{2}$/.test(text) || /GMT|UTC/i.test(text);
+  return new Date(hasZone ? text : `${text}Z`);
+}
 
-  try {
-    let d: Date;
-    if (typeof date === 'string') {
-      let dateStr = date.trim();
-      // Ensure ISO format T
-      if (dateStr.includes(' ') && !dateStr.includes('T')) {
-        dateStr = dateStr.replace(' ', 'T');
-      }
+/** Formats a timestamp in Indian Standard Time. Pass `{ hour: undefined, minute: undefined }` for a date only. */
+export function formatToIST(value: string | Date | number | null | undefined, options: Intl.DateTimeFormatOptions = {}): string {
+  if (!value) return "";
+  const date = parseTimestamp(value);
+  if (Number.isNaN(date.getTime())) return String(value);
 
-      // Check for various timezone indicators including Z, offsets (+05:30), or GMT/UTC suffixes
-      const hasTimezone = /Z|([+-]\d{2}:?\d{2})$/.test(dateStr) || /GMT|UTC/i.test(dateStr);
-
-      // Assume UTC if no timezone info is present
-      if (!hasTimezone) {
-        dateStr += 'Z';
-      }
-      d = new Date(dateStr);
-    } else {
-      d = new Date(date);
-    }
-
-    if (isNaN(d.getTime())) {
-      console.warn("formatToIST received invalid date:", date);
-      return String(date);
-    }
-
-    const finalOptions: Intl.DateTimeFormatOptions = {
-      timeZone: 'Asia/Kolkata',
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-      ...options
-    };
-
-    // Filter undefined values
-    const cleanOptions = Object.fromEntries(
-      Object.entries(finalOptions).filter(([_, v]) => v !== undefined)
-    );
-
-    return new Intl.DateTimeFormat('en-IN', cleanOptions).format(d);
-  } catch (e) {
-    console.error("formatToIST error:", e);
-    return String(date);
-  }
+  const merged: Intl.DateTimeFormatOptions = {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+    ...options,
+  };
+  const cleaned = Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined)) as Intl.DateTimeFormatOptions;
+  return new Intl.DateTimeFormat("en-IN", cleaned).format(date);
 }

@@ -1,54 +1,26 @@
-# Use python 3.11 slim image (Bookworm is standard and stable)
-FROM python:3.11-slim-bookworm
+# Backend image for Render (or any Docker host).
+FROM python:3.12-slim-bookworm
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV DEBIAN_FRONTEND=noninteractive
-# Virtual environment settings
-ENV VIRTUAL_ENV=/opt/venv
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Install system dependencies with retries for flaky mirrors
-RUN rm -rf /var/lib/apt/lists/* && \
-    apt-get update --fix-missing && \
-    apt-get install -y --no-install-recommends \
-    -o Acquire::Retries=3 \
-    tesseract-ocr \
-    libgl1-mesa-glx \
-    ffmpeg \
-    libmagic1 \
-    build-essential \
-    ca-certificates \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Tesseract is only an offline OCR fallback for when no Gemini model is reachable.
+# Everything else (PyMuPDF, Pillow, asyncpg, bcrypt ...) ships as binary wheels, so no compiler is needed.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user
 RUN groupadd -r appuser && useradd -r -g appuser -m -d /home/appuser appuser
-
-# Create venv and give permissions to appuser
-RUN python3 -m venv $VIRTUAL_ENV && \
-    chown -R appuser:appuser $VIRTUAL_ENV
-
-# Set work directory
 WORKDIR /app
-RUN chown -R appuser:appuser /app
 
-# Switch to non-root user
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY --chown=appuser:appuser app ./app
 USER appuser
 
-# Install Python dependencies
-COPY --chown=appuser:appuser requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
-COPY --chown=appuser:appuser . .
-
-# Expose port
 EXPOSE 8000
-
-RUN echo "Docker image built successfully"
-
-# Run uvicorn directly (DB init is now handled in app/main.py lifespan)
-# Run uvicorn using shell form to allow $PORT expansion
-# Using "sh -c" explicitly to be safe, though shell form does this implicitly.
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Render injects $PORT. --proxy-headers makes uvicorn trust the X-Forwarded-* headers set by Render's load balancer.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]

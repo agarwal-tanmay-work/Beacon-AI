@@ -1,419 +1,343 @@
+"""One reporting session from first message to submitted case.
+
+Request flow for ``process_message`` (and why it is shaped this way):
+
+1. **Authenticate** the session token against its stored hash (the old code only checked the ``tk_`` prefix).
+2. **Read** history / facts / evidence, then *commit* - this releases the database connection before the slow
+   AI call instead of holding a pooled connection "idle in transaction" for up to 35 s.
+3. **Think**: analyse any newly uploaded files, then run the chat agent (AI with fallback chain, or basic mode).
+4. **Write** the user message, the assistant reply and the updated facts in ONE transaction. If anything fails
+   before this point nothing was stored, so the user can simply resend (no orphaned half-turns, no
+   "trouble connecting to my brain" apology persisted as if the assistant had said it).
+5. **Submit** only when the server's own checks pass (required facts present) - never because of what a model wrote.
 """
-Report Engine - Backend Observer Pattern with Cloud-Only Database (Supabase).
 
-Data Flow:
-1. Chat sessions, history, and state stored in SUPABASE staging tables (Report, ReportConversation, ReportStateTracking)
-2. Finalized case data stored in SUPABASE beacon table (permanent)
-
-Key Rules:
-- ONE row per case in beacon table (INSERT once, UPDATE after)
-- reported_at, case_id, incident_summary stored permanently
-- Evidence metadata synced from Evidence table to Beacon on finalization
-"""
-
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from datetime import datetime, timezone
-import json
-import uuid
-import base64
-import os
 import asyncio
-import re
-import secrets
+import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+from typing import Any
+from uuid import UUID
 
-from app.db.session import AsyncSessionLocal
-from app.models.report import (
-    Report,
-    ReportConversation,
-    SenderType,
-    ReportStateTracking,
-    Evidence
-)
-from app.models.beacon import Beacon
-from app.schemas.report import MessageResponse
-from app.services.llm_agent import LLMAgent
-from app.services.case_service import CaseService
-from app.services.storage_service import StorageService
-from uuid import UUID as UUIDType
-from passlib.context import CryptContext
-import logging
+import structlog
 from fastapi import BackgroundTasks
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
-logger = logging.getLogger(__name__)
+from app.core.config import settings
+from app.core.exceptions import AppError
+from app.core.security import generate_access_token, generate_case_secret, hash_access_token, hash_secret, verify_access_token
+from app.core.time_utils import parse_iso_utc, utc_now
+from app.models.beacon import Beacon
+from app.models.report import Evidence, Report, ReportConversation, ReportStateTracking, ReportStatus, SenderType
+from app.schemas.ai import FACT_FIELDS, SKIPPED
+from app.schemas.report import CredentialsResponse, MessageResponse
+from app.services import chat_agent
+from app.services.case_service import CaseService
+from app.services.chat_agent import clean_facts, is_real, missing_basics
+from app.services.evidence_processor import EvidenceProcessor
+from app.services.gemini import GeminiBlocked
+
+logger = structlog.get_logger(__name__)
+
+CREDENTIAL_ESCROW = timedelta(hours=24)
+
+FINAL_MESSAGE = (
+    "Thank you for your courage in reporting this.\n"
+    "Your Case ID is: {case_id}\n"
+    "Your Secret Key is: {secret_key}\n\n"
+    "**IMPORTANT**: Please save both of these safely to track your case status. "
+    "We will investigate and take appropriate action. You've done the right thing by speaking up."
+)
+# What is written into the stored transcript - the secret key is deliberately not part of it.
+STORED_FINAL_MESSAGE = "Thank you for your courage in reporting this. Your report was submitted as Case ID {case_id}."
+ALREADY_SUBMITTED = (
+    "Your report has already been submitted as Case ID {case_id}. For your security the Secret Key is shown only once, "
+    "at submission. Use your Case ID and Secret Key on the Track page to follow up."
+)
+
+_session_locks: dict[UUID, asyncio.Lock] = {}
+
+
+@asynccontextmanager
+async def _exclusive(report_id: UUID):
+    """One message at a time per report (a double-click or a retry must not run two AI turns in parallel)."""
+    lock = _session_locks.setdefault(report_id, asyncio.Lock())
+    if lock.locked():
+        raise AppError(409, "busy", "I'm still working on your previous message. Please wait a moment.", retry_after=3)
+    async with lock:
+        try:
+            yield
+        finally:
+            _session_locks.pop(report_id, None)
+
+
+def build_incident_summary(facts: dict[str, str]) -> str:
+    """Neutral paragraph from the structured facts - shown until the AI summary is ready."""
+    parts = []
+    if is_real(facts.get("what")):
+        parts.append(facts["what"].rstrip(". ") + ".")
+    for label, key in (("Location", "where"), ("Date/time", "when"), ("Individuals involved", "who")):
+        if is_real(facts.get(key)):
+            parts.append(f"{label}: {facts[key].rstrip('. ')}.")
+    return " ".join(parts) or "Report submitted."
+
+
+def _evidence_entry(evidence: Evidence) -> dict[str, Any]:
+    return {
+        "file_name": evidence.file_name,
+        "mime_type": evidence.mime_type,
+        "size_bytes": evidence.size_bytes,
+        "file_path": evidence.file_path,
+    }
 
 
 class ReportEngine:
-    """
-    Backend Observer Pattern with Two-Tier Database.
-    
-    SUPABASE staging tables store:
-    - Active chat sessions (Report)
-    - Conversation messages (ReportConversation)
-    - State tracking (ReportStateTracking)
-    - Evidence metadata (Evidence)
-    
-    SUPABASE beacon table stores:
-    - One row per case (INSERT once)
-    - reported_at, case_id, incident_summary
-    - credibility_score, score_explanation
-    - evidence_files (JSON metadata)
-    """
-    
+    # ---- sessions --------------------------------------------------------------------
     @classmethod
-    async def process_message(
-        cls,
-        report_id: str,
-        user_message: str,
-        supabase_session: AsyncSession,
-        background_tasks: "BackgroundTasks" = None
-    ) -> MessageResponse:
-        """
-        Process a user message:
-        1. Store user message in Supabase
-        2. Build conversation history from Supabase
-        3. Forward to LLM
-        4. Store LLM response in Supabase
-        5. Handle completion - INSERT to beacon if final
-        """
-        try:
-            # Stage 1: Store user message in Supabase
-            print(f"[REPORT_ENGINE] STAGE 1: Store user message: {report_id}", flush=True)
-            user_msg = ReportConversation(
-                report_id=UUIDType(report_id),
-                sender=SenderType.USER,
-                content_redacted=user_message
-            )
-            supabase_session.add(user_msg)
-            await supabase_session.flush()
-            
-            # 1.5. CHECK FOR & PROCESS NEW EVIDENCE
-            ev_stmt = select(Evidence).where(Evidence.report_id == UUIDType(report_id)).order_by(Evidence.uploaded_at)
-            ev_result = await supabase_session.execute(ev_stmt)
-            evidence_items = list(ev_result.scalars().all())
-
-            # 2. Build conversation history from Supabase
-            stmt = select(ReportConversation).where(
-                ReportConversation.report_id == UUIDType(report_id)
-            ).order_by(ReportConversation.created_at)
-            result = await supabase_session.execute(stmt)
-            history_objs = result.scalars().all()
-            
-            # Fetch persistent state context from Supabase
-            state_stmt = select(ReportStateTracking).where(ReportStateTracking.report_id == UUIDType(report_id))
-            state_res = await supabase_session.execute(state_stmt)
-            state_tracking = state_res.scalar_one_or_none()
-            
-            if not state_tracking:
-                # Auto-initialize if missing (creates its own session and commits)
-                await ReportEngine.initialize_report(report_id, "tk_auto_gen")
-                # expire_all forces SQLAlchemy to discard its identity-map cache and
-                # re-read from the DB on the next query, ensuring we see the committed row
-                await supabase_session.expire_all()
-                state_stmt = select(ReportStateTracking).where(ReportStateTracking.report_id == UUIDType(report_id))
-                state_res = await supabase_session.execute(state_stmt)
-                state_tracking = state_res.scalar_one_or_none()
-                if not state_tracking:
-                    logger.error("state_tracking_init_failed", report_id=report_id)
-                    raise RuntimeError(f"Failed to initialize state tracking for report {report_id}. Check DB connectivity.")
-
-            current_state = {}
-            if state_tracking and state_tracking.context_data:
-                current_state = dict(state_tracking.context_data.get("extracted", {}))
-            
-            # --- NEW EVIDENCE LOGIC ---
-            last_count = int(current_state.get("evidence_count", 0))
-            current_count = len(evidence_items)
-            
-            evidence_context_str = ""
-            
-            if current_count > last_count:
-                new_items = evidence_items[last_count:]
-                
-                async def get_description(ev):
-                    try:
-                        mime = (ev.mime_type or "").lower()
-                        if mime.startswith("image"):
-                            desc = await LLMAgent.analyze_image_fast(ev.file_path)
-                            return f"Image: {desc}"
-                        elif mime.startswith("audio"):
-                            desc = await LLMAgent.analyze_audio_fast(ev.file_path)
-                            return f"Audio: {desc}"
-                        else:
-                            return f"File: {ev.file_name}"
-                    except Exception:
-                        return f"File: {ev.file_name}"
-
-                # Parallel Analysis
-                descriptions = await asyncio.gather(*(get_description(ev) for ev in new_items))
-                
-                evidence_context_str = "; ".join(descriptions)
-                
-                # Update State Immediately
-                current_state["evidence_count"] = current_count
-                current_state["evidence"] = "Uploaded" # Mark evidence as provided
-                
-                # Persist this specific state update immediately so we don't re-process if LLM crashes
-                if state_tracking is not None:
-                    new_context_data = dict(state_tracking.context_data or {})
-                    new_context_data["extracted"] = current_state
-                    state_tracking.context_data = new_context_data
-                    await supabase_session.flush()
-
-            # Convert to LLM format
-            conversation_history = []
-            for msg in history_objs:
-                role = "user" if msg.sender == SenderType.USER else "assistant"
-                
-                conversation_history.append({
-                    "role": role,
-                    "content": msg.content_redacted
-                })
-            
-            # ... (inject evidence context omitted for brevity, logic remains same)
-            if evidence_context_str:
-                conversation_history.append({
-                        "role": "system",
-                        "content": f"[NEW EVIDENCE UPLOADED]\nAnalysis of files just uploaded: {evidence_context_str}"
-                })
-
-            # ... (LLM call remains same)
-            llm_response, new_extracted_data = await LLMAgent.chat(conversation_history, current_state)
-            
-            if new_extracted_data and state_tracking:
-                updated_state = current_state.copy()
-                for k, v in new_extracted_data.items():
-                    if v and v != "...":
-                        updated_state[k] = v
-
-                new_context_data = dict(state_tracking.context_data or {})
-                new_context_data["extracted"] = updated_state
-                state_tracking.context_data = new_context_data
-                await supabase_session.flush()
-
-            # 4. Store LLM response in Supabase
-            sys_msg = ReportConversation(
-                report_id=UUIDType(report_id),
-                sender=SenderType.SYSTEM,
-                content_redacted=llm_response
-            )
-            supabase_session.add(sys_msg)
-            
-            final_report = new_extracted_data if new_extracted_data else current_state
-
-            
-            # 5. Handle completion
-            next_step = "ACTIVE"
-            case_id = None
-            secret_key_display = None
-            
-            # Trigger submission based on PLACEHOLDERS (Case-insensitive check)
-            # Also check for suspected hallucinated patterns if placeholder is missing but completion tone is detected
-            completion_patterns = [
-                r"CASE_ID_PLACEHOLDER",
-                r"SECRET_KEY_PLACEHOLDER",
-                r"Your Case ID is:? [A-Z0-9_-]+", # Catch hallucinations like BCN-1234
-                r"Your Secret Key is:? [A-Z0-9_-]+"
+    async def create_session(cls, db: AsyncSession) -> tuple[UUID, str]:
+        token = generate_access_token()
+        report = Report(id=uuid.uuid4(), access_token_hash=hash_access_token(token), status=ReportStatus.NEW)
+        db.add_all(
+            [
+                report,
+                ReportStateTracking(
+                    report_id=report.id,
+                    current_step="ACTIVE",
+                    context_data={"initialized_at": utc_now().isoformat(), "extracted": {}},
+                ),
             ]
-            
-            has_placeholder = any(re.search(p, llm_response, re.IGNORECASE) for p in completion_patterns)
-            
-            if has_placeholder:
-                # Force normalization of hallucinations to our standard placeholders for replacement
-                llm_response = re.sub(r"BCN-\d+", "CASE_ID_PLACEHOLDER", llm_response, flags=re.IGNORECASE)
-                
-                # Phase 1: INTAKE (FAIL-SAFE with Retries for Race Conditions)
-                max_retries = 3
-                retry_count = 0
-                while retry_count < max_retries:
-                    try:
-                        case_id = await CaseService.generate_next_case_id(supabase_session)
-                        
-                        # Generate Unique Secret Key
-                        secret_key_display = await CaseService.generate_unique_secret_key(supabase_session)
-                        secret_key_hash = pwd_context.hash(secret_key_display)
-                        
-                        # Replace placeholders (Extremely Case-insensitive & Robust)
-                        # This handles CASE_ID_PLACEHOLDER, CASE_ID_1234, etc.
-                        temp_llm_response = re.sub(r"CASE_ID_(PLACEHOLDER|\d+)", case_id, llm_response, flags=re.IGNORECASE)
-                        temp_llm_response = re.sub(r"SECRET_KEY_(PLACEHOLDER|\d+)", secret_key_display, temp_llm_response, flags=re.IGNORECASE)
-                        
-                        # Fallback Replacement: If AI still used a weird format or hallucinated a generic pattern
-                        temp_llm_response = re.sub(r"(Case ID is:?\s*)([A-Z0-9_-]+)", rf"\g<1>{case_id}", temp_llm_response, flags=re.I)
-                        temp_llm_response = re.sub(r"(Secret Key is:?\s*)([A-Z0-9_-]+)", rf"\g<1>{secret_key_display}", temp_llm_response, flags=re.I)
+        )
+        await db.commit()
+        return report.id, token
 
-                        # FINAL SAFETY NET: If Secret Key is NOT in the text AND placeholders were missed
-                        if secret_key_display not in temp_llm_response:
-                                temp_llm_response = temp_llm_response.rstrip()
-                                if not temp_llm_response.endswith("."):
-                                    temp_llm_response += "."
-                                temp_llm_response += f"\n\nYour Secret Key is {secret_key_display}. Please save this."
-                        
-                        # Get reported_at timestamp
-                        from app.core.time_utils import get_utc_now
-                        reported_at_utc = get_utc_now()
-                        
-                        # Phase 1.5: Gather evidence files metadata from Supabase
-                        evidence_files = await cls._get_evidence_metadata(report_id, supabase_session)
-                        
-                        # Ensure incident summary is a paragraph and free of placeholders
-                        raw_summary = final_report.get("incident_summary") or final_report.get("what") or "In-progress report"
-                        # Strip placeholders if they leaked into the summary
-                        clean_summary = re.sub(r"(CASE_ID|SECRET_KEY)_PLACEHOLDER", "", raw_summary, flags=re.I).strip()
-                        # Ensure it doesn't end with a colon or weird character
-                        clean_summary = re.sub(r"[:\s]+$", ".", clean_summary)
-                        if not clean_summary.endswith("."): clean_summary += "."
+    @classmethod
+    async def authenticate(cls, db: AsyncSession, report_id: UUID, token: str) -> Report:
+        report = await db.get(Report, report_id)
+        if report is None or not verify_access_token(token, report.access_token_hash):
+            raise AppError(401, "invalid_session", "This reporting session is not valid or has expired. Please start a new report.")
+        return report
 
-                        new_case = Beacon(
-                            case_id=case_id,
-                            reported_at=reported_at_utc,
-                            secret_key=secret_key_display,
-                            secret_key_hash=secret_key_hash,
-                            status="Received",
-                            incident_summary=clean_summary,
-                            evidence_files=evidence_files,
-                            credibility_score=None,
-                            credibility_breakdown=None,
-                            analysis_status="pending"
-                        )
-                        supabase_session.add(new_case)
-                        
-                        # Update Report record in Supabase
-                        stmt_rep = select(Report).where(Report.id == UUIDType(report_id))
-                        rep_res = await supabase_session.execute(stmt_rep)
-                        report_rec = rep_res.scalar_one_or_none()
-                        if report_rec:
-                            report_rec.case_id = case_id
-                            report_rec.status = "NEW"
+    # ---- credentials (held only until the reporter confirms they saved them) ---------
+    @classmethod
+    async def _state(cls, db: AsyncSession, report_id: UUID) -> ReportStateTracking:
+        state = await db.get(ReportStateTracking, report_id)
+        if state is None:  # sessions created by very old versions
+            state = ReportStateTracking(report_id=report_id, current_step="ACTIVE", context_data={"extracted": {}})
+            db.add(state)
+            await db.flush()
+        return state
 
-                        print(f"[REPORT_ENGINE] STAGE 4: Finalizing to Supabase: {case_id}", flush=True)
-                        await supabase_session.commit()
-                        
-                        llm_response = temp_llm_response # Finalize the response text
-                        print(f"[REPORT_ENGINE] STAGE 5: Phase 1 Intake Complete: {case_id}", flush=True)
-                        logger.info(f"phase1_intake_complete: {case_id}")
-                        next_step = "COMPLETED"
-                        break # Success!
-                        
-                    except Exception as e:
-                        # Explicitly handle IntegrityError for duplicate case IDs
-                        from sqlalchemy.exc import IntegrityError
-                        if isinstance(e, IntegrityError) or "UniqueViolationError" in str(e):
-                            print(f"[REPORT_ENGINE] Race condition detected for {case_id}. Retrying {retry_count+1}/{max_retries}...", flush=True)
-                            await supabase_session.rollback()
-                            retry_count += 1
-                            if retry_count >= max_retries:
-                                raise e # Give up after 3 tries
-                            continue
-                        else:
-                            # Other errors should be handled by the outer try-block
-                            raise e
+    @classmethod
+    async def pending_credentials(cls, db: AsyncSession, report_id: UUID) -> CredentialsResponse | None:
+        state = await db.get(ReportStateTracking, report_id)
+        creds = (state.context_data or {}).get("credentials") if state else None
+        if not creds:
+            return None
+        issued = creds.get("issued_at")
+        if issued and utc_now() - parse_iso_utc(issued) > CREDENTIAL_ESCROW:
+            await cls.acknowledge_credentials(db, report_id)  # expired: drop the plaintext key
+            return None
+        return CredentialsResponse(case_id=creds["case_id"], secret_key=creds["secret_key"])
 
-                # ---------------------------------------------------------
-                # PHASE 2: TRIGGER ASYNC ANALYSIS
-                # ---------------------------------------------------------
-                if background_tasks:
-                    print(f"[REPORT_ENGINE] Triggering automated background scoring for: {case_id}", flush=True)
-                    from app.services.scoring_service import ScoringService
-                    background_tasks.add_task(ScoringService.run_background_scoring, report_id, case_id)
+    @classmethod
+    async def acknowledge_credentials(cls, db: AsyncSession, report_id: UUID) -> None:
+        state = await db.get(ReportStateTracking, report_id)
+        if state and "credentials" in (state.context_data or {}):
+            data = dict(state.context_data)
+            data.pop("credentials", None)
+            state.context_data = data
+            await db.commit()
+
+    # ---- the conversation --------------------------------------------------------------
+    @classmethod
+    async def process_message(cls, db: AsyncSession, report: Report, content: str, background: BackgroundTasks) -> MessageResponse:
+        rid, existing_case = report.id, report.case_id
+        if existing_case:
+            return await cls._already_submitted(db, rid, existing_case)
+        async with _exclusive(rid):
+            return await cls._process_message(db, rid, content, background)
+
+    @classmethod
+    async def _process_message(cls, db: AsyncSession, rid: UUID, content: str, background: BackgroundTasks) -> MessageResponse:
+        # ---- 2. read -----------------------------------------------------------------
+        state = await cls._state(db, rid)
+        ctx: dict[str, Any] = dict(state.context_data or {})
+        facts = clean_facts(ctx.get("extracted"))
+        pending_field = ctx.get("pending_field")
+        rows = (
+            await db.execute(
+                select(ReportConversation.sender, ReportConversation.content_redacted)
+                .where(ReportConversation.report_id == rid)
+                .order_by(ReportConversation.created_at, ReportConversation.id)
+            )
+        ).all()
+        history = [("user" if sender == SenderType.USER else "assistant", text) for sender, text in rows]
+        if len(history) >= settings.MAX_MESSAGES_PER_REPORT:
+            raise AppError(
+                409,
+                "conversation_too_long",
+                "This conversation has become very long. Please say 'I'm done' to submit your report with what we have.",
+            )
+        evidence_rows = list((await db.execute(select(Evidence).where(Evidence.report_id == rid).order_by(Evidence.uploaded_at))).scalars())
+        await db.commit()  # release the connection before the slow part
+
+        # ---- 3. think ----------------------------------------------------------------
+        notes = dict(ctx.get("evidence_notes") or {})
+        fresh = [e for e in evidence_rows if str(e.id) not in notes]
+        if fresh:
+            analyses = await asyncio.gather(*(EvidenceProcessor.analyze(e, quick=True) for e in fresh), return_exceptions=True)
+            for evidence, analysis in zip(fresh, analyses, strict=True):
+                if isinstance(analysis, BaseException):
+                    logger.warning("evidence_note_failed", error_type=type(analysis).__name__)
+                    notes[str(evidence.id)] = f"File '{evidence.file_name}': uploaded"
                 else:
-                    print(f"[REPORT_ENGINE] WARNING: No background_tasks object found. Automated analysis NOT triggered for: {case_id}", flush=True)
+                    notes[str(evidence.id)] = EvidenceProcessor.chat_note(evidence, analysis)
+        evidence_note = "\n".join(notes[str(e.id)] for e in fresh) or None
+        if evidence_rows and not is_real(facts.get("evidence")):
+            facts["evidence"] = f"Uploaded ({len(evidence_rows)} file{'s' if len(evidence_rows) != 1 else ''})"
 
-            # Always commit all turns
-            await supabase_session.commit()
-            
+        try:
+            turn = await chat_agent.respond(
+                [*history, ("user", content)],
+                facts,
+                pending_field=pending_field,
+                evidence_count=len(evidence_rows),
+                evidence_note=evidence_note,
+            )
+        except GeminiBlocked as exc:
+            await db.rollback()
+            logger.info("chat_message_blocked", reason=exc.reason)
+            raise AppError(422, "message_blocked", "I couldn't process that message automatically. Could you try rephrasing it?") from exc
+
+        # ---- the server decides about submission --------------------------------------
+        reply, asked, merged = turn.reply, turn.asked_about, turn.facts
+        if evidence_rows and not is_real(merged.get("evidence")):
+            merged["evidence"] = facts["evidence"]
+        submit = False
+        if turn.ready_to_submit:
+            missing = missing_basics(merged)
+            if missing:
+                asked = missing[0]
+                reply = "Before I can submit your report I still need one detail. " + chat_agent.question_for(missing[0])
+                logger.info("submission_deferred_missing_facts", missing=missing)
+            else:
+                submit = True
+
+        # ---- 4. write ------------------------------------------------------------------
+        now = utc_now()
+        db.add(ReportConversation(report_id=rid, sender=SenderType.USER, content_redacted=content, created_at=now))
+        ctx.update(extracted=merged, pending_field=None if asked in ("none", None) else asked, mode=turn.mode, evidence_notes=notes)
+
+        if not submit:
+            db.add(
+                ReportConversation(
+                    report_id=rid, sender=SenderType.SYSTEM, content_redacted=reply, created_at=now + timedelta(milliseconds=1)
+                )
+            )
+            state.context_data = ctx
+            await db.commit()
             return MessageResponse(
-                report_id=UUIDType(report_id),
+                report_id=rid,
                 sender=SenderType.SYSTEM,
-                content=llm_response,
-                timestamp=datetime.now(timezone.utc),
-                next_step=next_step,
+                content=reply,
+                timestamp=utc_now(),
+                next_step="ACTIVE",
+                mode=turn.mode,
+                notice=turn.notice,
+            )
+
+        return await cls._submit(db, rid, state, ctx, merged, evidence_rows, turn.mode, background, now)
+
+    # ---- submission -----------------------------------------------------------------------
+    @classmethod
+    async def _submit(
+        cls,
+        db: AsyncSession,
+        rid: UUID,
+        state: ReportStateTracking,
+        ctx: dict[str, Any],
+        facts: dict[str, str],
+        evidence_rows: list[Evidence],
+        mode: str,
+        background: BackgroundTasks,
+        now: datetime,
+    ) -> MessageResponse:
+        # Serialise with any other request finishing this same report (cross-process safe on PostgreSQL).
+        locked = (
+            await db.execute(select(Report).where(Report.id == rid).with_for_update().execution_options(populate_existing=True))
+        ).scalar_one()
+        if locked.case_id:
+            winner = locked.case_id
+            await db.rollback()  # (ORM instances are expired by this - only plain values are used from here on)
+            return await cls._already_submitted(db, rid, winner)
+
+        case_id = await CaseService.next_case_id(db)  # on PostgreSQL this holds an advisory lock until the commit below
+        secret = generate_case_secret()
+        secret_hash = await asyncio.to_thread(hash_secret, secret)
+
+        db.add(
+            Beacon(
                 case_id=case_id,
-                secret_key=secret_key_display if case_id else None
+                reported_at=now,
+                incident_summary=build_incident_summary(facts),
+                reporter_details={f: facts[f] for f in FACT_FIELDS if facts.get(f) and facts[f] != SKIPPED},
+                secret_key_hash=secret_hash,
+                status="Received",
+                evidence_files=[_evidence_entry(e) for e in evidence_rows],
+                analysis_status="pending",
             )
-        
-        except Exception as e:
-            print(f"[REPORT_ENGINE] ERROR in process_message: {e}", flush=True)
-            await supabase_session.rollback()
-            raise
+        )
+        locked.case_id = case_id
+        for evidence in evidence_rows:
+            evidence.case_id = case_id
+        db.add(
+            ReportConversation(
+                report_id=rid,
+                sender=SenderType.SYSTEM,
+                content_redacted=STORED_FINAL_MESSAGE.format(case_id=case_id),
+                created_at=now + timedelta(milliseconds=1),
+            )
+        )
+        ctx["credentials"] = {"case_id": case_id, "secret_key": secret, "issued_at": now.isoformat()}
+        ctx["pending_field"] = None
+        state.context_data = ctx
+        await db.commit()
+
+        logger.info("report_submitted", case_id=case_id, evidence_files=len(evidence_rows), mode=mode)
+        from app.services.scoring_service import ScoringService  # local import avoids a module cycle
+
+        background.add_task(ScoringService.run_background_scoring, str(rid), case_id)
+        return MessageResponse(
+            report_id=rid,
+            sender=SenderType.SYSTEM,
+            content=FINAL_MESSAGE.format(case_id=case_id, secret_key=secret),
+            timestamp=utc_now(),
+            next_step="COMPLETED",
+            case_id=case_id,
+            secret_key=secret,
+            mode="ai" if mode == "ai" else "basic",
+        )
 
     @classmethod
-    async def _get_evidence_metadata(cls, session_id: str, supabase_session: AsyncSession) -> list:
-        """Fetch and format evidence metadata for the beacon record."""
-        from sqlalchemy import select
-        stmt = select(Evidence).where(Evidence.report_id == UUIDType(session_id))
-        result = await supabase_session.execute(stmt)
-        evidence_objs = result.scalars().all()
-        
-        results = []
-        for ev in evidence_objs:
-            results.append({
-                "file_name": ev.file_name,
-                "mime_type": ev.mime_type,
-                "size_bytes": ev.size_bytes,
-                "file_path": ev.file_path,
-                "full_url": StorageService.get_public_url(ev.file_path)
-            })
-        return results
-
-    @classmethod
-    async def initialize_report(cls, report_id: str, access_token: str):
-        """
-        Initialize a new report session in SUPABASE.
-        """
-        import hashlib
-        token_hash = hashlib.sha256(access_token.encode()).hexdigest()
-
-        async with AsyncSessionLocal() as supabase_session:
-            # Check if session already exists
-            stmt = select(Report).where(Report.id == UUIDType(report_id))
-            result = await supabase_session.execute(stmt)
-            existing = result.scalar_one_or_none()
-            
-            if existing:
-                print(f"[REPORT_ENGINE] Session {report_id} already exists in Supabase", flush=True)
-                return
-            
-            # Create Report (Supabase)
-            new_report = Report(
-                id=UUIDType(report_id),
-                access_token_hash=token_hash,
-                status="NEW"
+    async def _already_submitted(cls, db: AsyncSession, rid: UUID, case_id: str) -> MessageResponse:
+        """Replay for a session that already produced a case (retry, second tab, lost response)."""
+        creds = await cls.pending_credentials(db, rid)
+        if creds:
+            return MessageResponse(
+                report_id=rid,
+                sender=SenderType.SYSTEM,
+                content=FINAL_MESSAGE.format(case_id=creds.case_id, secret_key=creds.secret_key),
+                timestamp=utc_now(),
+                next_step="COMPLETED",
+                case_id=creds.case_id,
+                secret_key=creds.secret_key,
             )
-            supabase_session.add(new_report)
-
-            # Initialize state tracking in Supabase
-            state_tracking = ReportStateTracking(
-                report_id=UUIDType(report_id),
-                current_step="ACTIVE",
-                context_data={
-                    "initialized_at": datetime.now(timezone.utc).isoformat(),
-                    "extracted": {}
-                }
-            )
-            supabase_session.add(state_tracking)
-            await supabase_session.commit()
-            
-            print(f"[REPORT_ENGINE] Initialized Supabase session: {report_id}", flush=True)
-
-    @classmethod
-    async def get_session_status(cls, session_id: str) -> dict:
-        """
-        Get session status from Supabase.
-        """
-        async with AsyncSessionLocal() as supabase_session:
-            stmt = select(Report).where(Report.id == UUIDType(session_id))
-            result = await supabase_session.execute(stmt)
-            report = result.scalar_one_or_none()
-            
-            if not report:
-                return {"error": "Report session not found"}
-            
-            return {
-                "session_id": str(report.id),
-                "is_active": report.status != "CLOSED",
-                "is_submitted": report.case_id is not None,
-                "case_id": report.case_id,
-                "created_at": report.created_at.isoformat() if report.created_at else None
-            }
+        return MessageResponse(
+            report_id=rid,
+            sender=SenderType.SYSTEM,
+            content=ALREADY_SUBMITTED.format(case_id=case_id),
+            timestamp=utc_now(),
+            next_step="COMPLETED",
+            case_id=case_id,
+        )

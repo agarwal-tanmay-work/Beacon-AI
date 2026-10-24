@@ -1,74 +1,69 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-import os
+"""Evidence upload for a reporting session."""
+
 import uuid
-import hashlib
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, File, Form, UploadFile
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.uploads import store_upload, validate_upload
 from app.core.config import settings
+from app.core.exceptions import AppError
+from app.core.rate_limit import limit
+from app.db.session import get_db
+from app.models.report import Evidence
+from app.schemas.report import EvidenceUploadResponse
+from app.services.report_engine import ReportEngine
 from app.services.storage_service import StorageService
-from datetime import datetime, timezone
 
 router = APIRouter()
 
-# Cloud-Only Storage (Supabase)
-# No local uploads directory used in production.
 
-@router.post("/upload")
+@router.post("/upload", response_model=EvidenceUploadResponse, dependencies=[Depends(limit("upload"))])
 async def upload_evidence(
-    report_id: str = Form(...),
+    report_id: UUID = Form(...),
     access_token: str = Form(...),
-    file: UploadFile = File(...)
-):
-    """
-    Upload evidence file, save to local staging, and track in SQLite.
-    """
-    # Simple token validation (matching reporting.py logic)
-    if not access_token.startswith("tk_"):
-        raise HTTPException(status_code=401, detail="Invalid access token")
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> EvidenceUploadResponse:
+    """Attach a photo / document / recording to an open reporting session.
 
+    The old endpoint accepted anything with an ``access_token`` that merely started with ``tk_`` - anyone could fill the
+    storage bucket. Now: real token check, size and type allowlist (from the file's bytes), per-report file cap.
+    """
+    report = await ReportEngine.authenticate(db, report_id, access_token)
+    if report.case_id:
+        raise AppError(409, "report_submitted", "This report has already been submitted. Evidence can no longer be added to it.")
+
+    existing = (await db.execute(select(func.count()).select_from(Evidence).where(Evidence.report_id == report.id))).scalar_one()
+    if existing >= settings.MAX_EVIDENCE_FILES_PER_REPORT:
+        raise AppError(409, "too_many_files", f"A report can include at most {settings.MAX_EVIDENCE_FILES_PER_REPORT} files.")
+
+    upload = await validate_upload(file)
+    stored = await store_upload(upload, f"reports/{report.id}")
+    evidence = Evidence(
+        id=uuid.uuid4(),
+        report_id=report.id,
+        file_path=stored.ref,
+        file_name=upload.display_name,
+        mime_type=upload.detected.mime,
+        size_bytes=len(upload.content),
+        file_hash=upload.sha256,
+        is_pii_cleansed=True,
+    )
+    db.add(evidence)
     try:
-        content = await file.read()
-        file_hash = hashlib.sha256(content).hexdigest()
-        
-        # PRODUCTION: Upload to Supabase Storage
-        try:
-            # Use standardized StorageService
-            upload_res = await StorageService.upload_file(content, file.filename, file.content_type or "application/octet-stream")
-            file_path = f"supastorage://{upload_res['bucket']}/{upload_res['path']}"
-            print(f"[UPLOAD] Uploaded to Supabase: {file_path}")
-        except Exception as sup_err:
-            print(f"[UPLOAD] Supabase Upload Failed: {sup_err}")
-            raise HTTPException(status_code=503, detail="Cloud storage unavailable. Please try again later.")
-            
-        # Track in Supabase
-        from app.db.session import AsyncSessionLocal
-        from app.models.report import Evidence
-        
-        async with AsyncSessionLocal() as session:
-            # Only apply abspath if it's a local file path
-            final_path = file_path
-            if not file_path.startswith("supastorage://"):
-                final_path = os.path.abspath(file_path)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        await StorageService.delete(stored.ref)  # do not leave an orphaned file behind
+        raise
 
-            new_evidence = Evidence(
-                id=uuid.uuid4(),
-                report_id=uuid.UUID(report_id),
-                file_name=file.filename,
-                file_path=final_path,
-                mime_type=file.content_type or "application/octet-stream",
-                size_bytes=len(content),
-                file_hash=file_hash,
-                is_pii_cleansed=False,
-                uploaded_at=datetime.now(timezone.utc)
-            )
-            session.add(new_evidence)
-            await session.commit()
-            
-        return {
-            "status": "success",
-            "file_name": file.filename,
-            "hash": file_hash
-        }
-    except Exception as e:
-        import traceback
-        print(f"Upload error: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return EvidenceUploadResponse(
+        evidence_id=evidence.id,
+        file_name=upload.display_name,
+        mime_type=upload.detected.mime,
+        size_bytes=len(upload.content),
+        hash=upload.sha256,
+    )

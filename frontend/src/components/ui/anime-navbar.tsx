@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React, { useState, useSyncExternalStore } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
@@ -20,25 +20,12 @@ interface NavBarProps {
     alignment?: "center" | "right"
 }
 
-export function AnimeNavBar({ items, className, defaultActive = "Home", alignment = "center" }: NavBarProps) {
+const subscribeNoop = () => () => {}
+
+export function AnimeNavBar({ items, className, alignment = "center" }: NavBarProps) {
     const pathname = usePathname()
-    const [mounted, setMounted] = useState(false)
+    const mounted = useSyncExternalStore(subscribeNoop, () => true, () => false)
     const [hoveredTab, setHoveredTab] = useState<string | null>(null)
-    const [isMobile, setIsMobile] = useState(false)
-
-    useEffect(() => {
-        setMounted(true)
-    }, [])
-
-    useEffect(() => {
-        const handleResize = () => {
-            setIsMobile(window.innerWidth < 768)
-        }
-
-        handleResize()
-        window.addEventListener("resize", handleResize)
-        return () => window.removeEventListener("resize", handleResize)
-    }, [])
 
     if (!mounted) return null
 

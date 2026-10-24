@@ -1,26 +1,23 @@
-"""
-Beacon Message Model - Stores two-way communication for a case.
-"""
+"""Two-way messages between the reporter and the investigators of a case."""
 
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON
-from sqlalchemy.dialects.postgresql import UUID
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Text, Uuid
+
 from app.db.base import Base
 
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
 class BeaconMessage(Base):
-    """
-    Stores messages exchanged between User vs Admin.
-    """
     __tablename__ = "beacon_message"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     case_id = Column(String, ForeignKey("beacon.case_id"), nullable=False, index=True)
-    
-    sender_role = Column(String, nullable=False) # 'user' or 'admin'
-    content = Column(Text, nullable=True)        # Text content
-    
-    # Attachments: List of {file_name, file_path, file_hash, mime_type}
-    attachments = Column(JSON, default=list)
-    
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    sender_role = Column(String, nullable=False)  # "user" | "admin"
+    content = Column(Text, nullable=True)
+    attachments = Column(JSON, default=list)  # [{"file_name", "file_path" (storage ref), "mime_type"}]
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)

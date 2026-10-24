@@ -1,193 +1,167 @@
+"""Background analysis of a submitted case: evidence analysis -> AI summary -> credibility score.
+
+Reliability model (replacing "retry inline for up to 7 minutes, then give up forever"):
+
+* every step is individually retried by the Gemini client (model fallback chain);
+* progress is saved step by step - a scoring failure no longer throws away a finished summary;
+* a failed or interrupted analysis is marked ``failed`` / left ``processing`` and picked up again by the
+  maintenance sweep (``app.services.maintenance``) with back-off, so a Render restart, a quota outage or a
+  retired model can no longer leave a case on "Pending analysis" forever.
+"""
+
 import asyncio
+from typing import Any
+from uuid import UUID
+
 import structlog
-from datetime import datetime, timezone
 from sqlalchemy import select
-from sqlalchemy.orm import Session
-from fastapi.concurrency import run_in_threadpool
 
-from app.db.session import AsyncSessionLocal
-
+from app.core.time_utils import utc_now
+from app.db.session import open_session
 from app.models.beacon import Beacon
-from app.models.report import ReportConversation, Evidence, SenderType
-from app.services.ai_service import GroqService
-from app.services.storage_service import StorageService
+from app.models.report import Evidence, ReportConversation, SenderType
+from app.schemas.ai import EvidenceDigest
+from app.services import ai_service
 from app.services.evidence_processor import EvidenceProcessor
+from app.services.gemini import GeminiError
+from app.services.scoring_rules import finalize_score
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
+
+DISCLAIMER = "This analysis reflects the information provided. It does not verify the authenticity, truth or legality of any claim."
+_FINAL_MESSAGE_PREFIX = "Thank you for your courage in reporting this."
+
+_in_flight: set[str] = set()
+_lock: asyncio.Lock | None = None
+_lock_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _global_lock() -> asyncio.Lock:
+    """Only one analysis at a time: keeps Gemini usage predictable. (Re-created if the event loop changed.)"""
+    global _lock, _lock_loop
+    loop = asyncio.get_running_loop()
+    if _lock is None or _lock_loop is not loop:
+        _lock, _lock_loop = asyncio.Lock(), loop
+    return _lock
+
+
+def evidence_summary(evidence: Evidence, analysis: dict[str, Any] | None) -> dict[str, Any]:
+    """The admin-facing record of one uploaded file (storage ref + what the analysis found)."""
+    entry: dict[str, Any] = {
+        "file_name": evidence.file_name,
+        "mime_type": evidence.mime_type,
+        "size_bytes": evidence.size_bytes,
+        "file_path": evidence.file_path,
+        "analyzed": bool(analysis and analysis.get("analysis_available")),
+    }
+    if analysis:
+        entry["kind"] = analysis.get("kind")
+        entry["summary"] = (analysis.get("description") or analysis.get("transcript") or analysis.get("extracted_text") or "")[:400]
+        entry["quality_notes"] = analysis.get("quality_notes") or []
+    return entry
+
 
 class ScoringService:
-    # Class-level lock to ensure only one scoring task runs at a time globally
-    # This prevents parallel Groq API spikes and complex race conditions in Supabase updates
-    _global_lock = asyncio.Lock()
+    @classmethod
+    def is_running(cls, case_id: str) -> bool:
+        return case_id in _in_flight
 
-    @staticmethod
-    async def run_background_scoring(session_id: str, case_id: str):
-        """
-        Asynchronous task to:
-        1. Fetch chat history and evidence from Supabase
-        2. Process evidence (OCR/Media)
-        3. Generate AI Summary & Score with robust retries
-        4. Update Beacon in Supabase
-        """
-        logger.info("background_scoring_start", case_id=case_id, session_id=session_id)
-        
-        async with ScoringService._global_lock:
-            # Open Supabase session
-            async with AsyncSessionLocal() as remote_db:
-                beacon = None
-                try:
-                    # 1. Fetch case from Supabase
-                    stmt = select(Beacon).where(Beacon.case_id == case_id)
-                    result = await remote_db.execute(stmt)
-                    beacon = result.scalar_one_or_none()
-                    
-                    if not beacon:
-                        logger.error("beacon_not_found", case_id=case_id)
-                        return
+    @classmethod
+    async def run_background_scoring(cls, report_id: str, case_id: str) -> None:
+        """Entry point used by BackgroundTasks, the admin 're-analyse' button and the maintenance sweep."""
+        if case_id in _in_flight:
+            return
+        _in_flight.add(case_id)
+        try:
+            async with _global_lock():
+                await cls._run(UUID(report_id), case_id)
+        except Exception:  # noqa: BLE001 - a background task must never crash the worker
+            logger.exception("background_scoring_crashed", case_id=case_id)
+        finally:
+            _in_flight.discard(case_id)
 
-                    # Update status to processing (if not already failed)
-                    beacon.analysis_status = "processing"
-                    await remote_db.commit()
+    @classmethod
+    async def _run(cls, report_id: UUID, case_id: str) -> None:
+        async with open_session() as db:
+            beacon = (await db.execute(select(Beacon).where(Beacon.case_id == case_id))).scalar_one_or_none()
+            if beacon is None:
+                logger.error("analysis_case_not_found", case_id=case_id)
+                return
 
-                    # 2. Fetch Chat History from Supabase
-                    from uuid import UUID
-                    history_stmt = select(ReportConversation).where(
-                        ReportConversation.report_id == UUID(session_id)
-                    ).order_by(ReportConversation.created_at.asc())
-                    hist_res = await remote_db.execute(history_stmt)
-                    history_objs = hist_res.scalars().all()
-                    
-                    chat_history = []
-                    for msg in history_objs:
-                        role = "user" if msg.sender == SenderType.USER else "assistant"
-                        chat_history.append({"role": role, "content": msg.content_redacted})
+            beacon.analysis_status = "processing"
+            beacon.analysis_attempts = (beacon.analysis_attempts or 0) + 1
+            await db.commit()
+            logger.info("analysis_started", case_id=case_id, attempt=beacon.analysis_attempts)
 
-                    if not chat_history:
-                        logger.warning("no_chat_history_found", case_id=case_id)
+            try:
+                lines = [
+                    ("user" if sender == SenderType.USER else "assistant", text)
+                    for sender, text in (
+                        await db.execute(
+                            select(ReportConversation.sender, ReportConversation.content_redacted)
+                            .where(ReportConversation.report_id == report_id)
+                            .order_by(ReportConversation.created_at, ReportConversation.id)
+                        )
+                    ).all()
+                    if not text.startswith(_FINAL_MESSAGE_PREFIX)
+                ]
+                evidence_rows = list(
+                    (await db.execute(select(Evidence).where(Evidence.report_id == report_id).order_by(Evidence.uploaded_at))).scalars()
+                )
 
-                    # 3. Fetch Evidence from Supabase
-                    ev_stmt = select(Evidence).where(Evidence.report_id == UUID(session_id))
-                    ev_res = await remote_db.execute(ev_stmt)
-                    evidence_objs = ev_res.scalars().all()
+                # 1. evidence - failures degrade the digest, they do not abort the analysis
+                digests: list[EvidenceDigest] = []
+                analyses: list[dict[str, Any]] = []
+                seen_hashes: set[str] = set()
+                for evidence in evidence_rows:
+                    try:
+                        analysis = await EvidenceProcessor.analyze(evidence)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("evidence_analysis_failed", case_id=case_id, error_type=type(exc).__name__)
+                        analysis = {"kind": "unknown", "analysis_available": False}
+                    duplicate = evidence.file_hash in seen_hashes
+                    seen_hashes.add(evidence.file_hash)
+                    analyses.append(analysis)
+                    digests.append(EvidenceProcessor.to_digest(evidence, analysis, duplicate=duplicate))
+                beacon.evidence_files = [evidence_summary(e, a) for e, a in zip(evidence_rows, analyses, strict=True)]
+                await db.commit()
 
-                    # 4. Process Evidence (OCR/Labels)
-                    logger.info("processing_evidence_start", case_id=case_id, count=len(list(evidence_objs)))
-                    evidence_metadata = await run_in_threadpool(EvidenceProcessor.process_evidence, list(evidence_objs))
+                # 2. summary (kept even if scoring fails below)
+                if not beacon.ai_summary:
+                    beacon.ai_summary = await ai_service.summarize_report(lines, digests)
+                    await db.commit()
 
-                    # 5. AI Reasoning
-                    summary = None
-                    # Increased retry attempts and more aggressive backoff
-                    backoff_times = [5, 15, 30, 60, 120, 180] 
-                    
-                    # --- SUMMARY GENERATION ---
-                    logger.info("generating_summary", case_id=case_id)
-                    for attempt in range(len(backoff_times)):
-                        result, retry_hint = await GroqService.generate_pro_summary(chat_history, timeout=30.0)
-                        if result:
-                            summary = result
-                            break
-                        
-                        wait_time = retry_hint if retry_hint else backoff_times[attempt]
-                        logger.warning("bg_summary_retry", case_id=case_id, attempt=attempt+1, wait=wait_time)
-                        await asyncio.sleep(wait_time)
+                # 3. score
+                final = finalize_score(await ai_service.score_report(lines, digests), digests)
+                beacon.credibility_score = final.total
+                beacon.ai_explanation = {
+                    "rationale": final.rationale,
+                    "confidence": final.confidence,
+                    "limitations": final.limitations,
+                    "safety": DISCLAIMER,
+                    "narrative_score": final.narrative,
+                    "evidence_score": final.evidence,
+                    "behavioral_score": final.behavioral,
+                }
+                beacon.score_explanation = " ".join(
+                    [f"This report received a {final.confidence} confidence rating.", *final.rationale, *final.limitations]
+                )
+                beacon.analysis_status = "completed"
+                beacon.analysis_last_error = None
+                await db.commit()
+                logger.info("analysis_completed", case_id=case_id, score=final.total, confidence=final.confidence)
 
-                    if not summary:
-                        raise Exception("AI summary generation failed after all retries (Rate Limited or API Error)")
+            except GeminiError as exc:
+                await cls._mark_failed(db, case_id, f"{exc.kind}: {str(exc)[:200]}")
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("analysis_failed_unexpectedly", case_id=case_id)
+                await cls._mark_failed(db, case_id, f"{type(exc).__name__}")
 
-                    # --- FORENSIC ENRICHMENT ---
-                    # We process enrichment but don't fail the whole task if it fails
-                    for ev in evidence_metadata:
-                        try:
-                            if ev.file_type == "image" and ev.ocr_text_snippet and len(ev.ocr_text_snippet) > 10:
-                                analysis, _ = await GroqService.perform_forensic_ocr_analysis(ev.ocr_text_snippet, summary, timeout=20.0)
-                                if analysis: ev.forensic_analysis = analysis
-
-                            if ev.file_type == "audio" and ev.audio_transcript_snippet and len(ev.audio_transcript_snippet) > 10:
-                                audio_analysis, _ = await GroqService.perform_forensic_audio_analysis(ev.audio_transcript_snippet, summary, timeout=20.0)
-                                if audio_analysis: ev.forensic_audio_analysis = audio_analysis
-
-                            if ev.file_type == "image":
-                                img_content = None
-                                if ev.file_path.startswith("supastorage://"):
-                                    parts = ev.file_path.replace("supastorage://", "").split("/", 1)
-                                    img_content = await run_in_threadpool(StorageService.download_file, parts[0], parts[1])
-                                else:
-                                    img_content = await run_in_threadpool(lambda: open(ev.file_path, "rb").read())
-
-                                if img_content:
-                                    visual_desc, _ = await GroqService.perform_forensic_visual_analysis(img_content, "image/jpeg", timeout=25.0)
-                                    if visual_desc: ev.object_labels.append(f"context: {visual_desc}")
-                        except Exception as enrichment_err:
-                            logger.warning("enrichment_step_failed", file=ev.file_name, error=str(enrichment_err))
-
-                    # --- CREDIBILITY SCORING ---
-                    metadata_context = {
-                        "evidence_count": len(evidence_objs),
-                        "timestamp": str(datetime.now(timezone.utc)),
-                        "layer1_flags": [m.model_dump() for m in evidence_metadata]
-                    }
-                    
-                    logger.info("calculating_score", case_id=case_id)
-                    score_result = None
-                    for attempt in range(len(backoff_times)):
-                        scoring_res, retry_hint = await GroqService.calculate_credibility_score(chat_history, evidence_metadata, metadata_context, timeout=45.0)
-                        if scoring_res:
-                            score_result = scoring_res
-                            break
-                            
-                        wait_time = retry_hint if retry_hint else backoff_times[attempt]
-                        logger.warning("bg_score_retry", case_id=case_id, attempt=attempt+1, wait=wait_time)
-                        await asyncio.sleep(wait_time)
-
-                    if not score_result:
-                        raise Exception("Credibility scoring failed after all retries (Rate Limited or API Error)")
-
-                    # 6. DATABASE UPDATE (Supabase)
-                    beacon.credibility_score = max(1, min(100, score_result.credibility_score))
-                    beacon.ai_summary = summary
-                    beacon.ai_explanation = {
-                        "rationale": score_result.rationale,
-                        "confidence": score_result.confidence_level,
-                        "limitations": score_result.limitations,
-                        "safety": score_result.final_safety_statement,
-                        "narrative_score": score_result.narrative_credibility.score if score_result.narrative_credibility else 0,
-                        "evidence_score": score_result.evidence_strength.score if score_result.evidence_strength else 0
-                    }
-                    beacon.analysis_status = "completed"
-                    beacon.analysis_last_error = None
-                    
-                    # Update score_explanation (Text) for compatibility with existing dashboard
-                    # Paragraph form as requested by user
-                    rationale_text = " ".join(score_result.rationale or [])
-                    limitations_text = " ".join(score_result.limitations or [])
-                    beacon.score_explanation = f"This report received a {score_result.confidence_level} confidence rating. {rationale_text} {limitations_text}".strip()
-
-                    # Sync forensic metadata back to the evidence_files JSON list in Beacon
-                    if beacon.evidence_files:
-                        updated_evidence_files = []
-                        for remote_ev in beacon.evidence_files:
-                            match = next((m for m in evidence_metadata if m.file_name == remote_ev.get("file_name")), None)
-                            if match:
-                                remote_ev["forensic_analysis"] = match.forensic_analysis.model_dump() if hasattr(match.forensic_analysis, "model_dump") else match.forensic_analysis
-                                remote_ev["forensic_audio_analysis"] = match.forensic_audio_analysis.model_dump() if hasattr(match.forensic_audio_analysis, "model_dump") else match.forensic_audio_analysis
-                                remote_ev["object_labels"] = match.object_labels
-                            updated_evidence_files.append(remote_ev)
-                        beacon.evidence_files = updated_evidence_files
-
-                    await remote_db.commit()
-                    logger.info("background_scoring_success", case_id=case_id, score=beacon.credibility_score)
-
-                except Exception as e:
-                    logger.error("background_scoring_failed", case_id=case_id, error=str(e))
-                    import traceback
-                    traceback.print_exc()
-                    
-                    # Ensure we mark it as failed in the DB so user doesn't see "Pending" forever
-                    if beacon:
-                        try:
-                            # Re-fetch or ensure session is usable to update status
-                            beacon.analysis_status = "failed"
-                            beacon.analysis_last_error = str(e)
-                            await remote_db.commit()
-                        except Exception as db_err:
-                            logger.error("failed_to_post_error_status", error=str(db_err))
+    @classmethod
+    async def _mark_failed(cls, db: Any, case_id: str, reason: str) -> None:
+        await db.rollback()
+        beacon = (await db.execute(select(Beacon).where(Beacon.case_id == case_id))).scalar_one()
+        beacon.analysis_status = "failed"
+        beacon.analysis_last_error = f"{utc_now().isoformat()} {reason}"
+        await db.commit()
+        logger.warning("analysis_failed", case_id=case_id, reason=reason, attempts=beacon.analysis_attempts)

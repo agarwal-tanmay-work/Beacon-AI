@@ -1,27 +1,37 @@
-export interface ReportResponse {
-    report_id: string;
-    access_token: string;
-    message: string;
-}
+export type Sender = "USER" | "SYSTEM" | "AI";
 
+/** Response of POST /public/reports/message */
 export interface MessageResponse {
     report_id: string;
-    sender: "USER" | "SYSTEM" | "AI";
+    sender: Sender;
     content: string;
     timestamp: string;
-    next_step: string | null;
+    next_step: "ACTIVE" | "COMPLETED";
+    case_id: string | null;
+    secret_key: string | null;
+    /** "basic" = the AI assistant was unavailable and fixed questions were used. */
+    mode: "ai" | "basic";
+    notice: string | null;
+}
+
+export interface AttachmentMeta {
+    type: "image" | "audio" | "file";
+    name: string;
+    size: number;
+    previewUrl?: string;
 }
 
 export interface Message {
     id: string;
-    sender: "USER" | "SYSTEM" | "AI";
+    sender: Sender;
     content: string;
     timestamp: string;
-    next_step?: string;
+    attachments?: AttachmentMeta[];
+    /** Local-only delivery state for the user's own messages. */
+    status?: "sending" | "failed";
 }
 
-export interface EvidenceParam {
-    report_id: string;
-    access_token: string;
-    file: File;
+export interface Credentials {
+    caseId: string;
+    secretKey: string;
 }

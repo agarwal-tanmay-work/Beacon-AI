@@ -1,85 +1,52 @@
-"""
-Beacon Model - Supabase Table for Final Case Storage.
-
-This table stores exactly ONE row per case with:
-- reported_at: When user first submits
-- case_id: BCN + 12 digits (unique, immutable)
-- incident_summary: Generated once after full chat
-- credibility_score: Integer 1-100 (permanent)
-- score_explanation: Detailed reasoning for the score
-- evidence_files: JSONB with actual file content (Base64)
-"""
+"""``beacon`` - the permanent record of a submitted case (exactly one row per case)."""
 
 import uuid
-from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
-from sqlalchemy import Column, String, Integer, DateTime, Text, JSON
-from sqlalchemy.dialects.postgresql import UUID
-import re
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, Column, DateTime, Integer, String, Text, Uuid
 
 from app.db.base import Base
 
 
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
 class Beacon(Base):
-    """
-    Final case storage in Supabase.
-    Exactly ONE row per case - INSERT once, UPDATE for subsequent changes.
-    """
     __tablename__ = "beacon"
-    
-    # Primary Key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    
-    # Required Fields (set on initial INSERT)
+
+    id = Column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     reported_at = Column(DateTime(timezone=True), nullable=False)
-    case_id = Column(String(15), unique=True, nullable=False, index=True)
-    
-    # Generated Fields (set via UPDATE after background processing)
+    case_id = Column(String(15), unique=True, nullable=False, index=True)  # BCN + 12 digits
+
+    # What the reporter told us. ``incident_summary`` is a neutral paragraph built from the structured facts at
+    # submission time; ``reporter_details`` keeps those facts (what/where/when/who + the *optional* contact info).
     incident_summary = Column(Text, nullable=True)
-    ai_summary = Column(Text, nullable=True) # Unified field for AI generated summary
-    ai_explanation = Column(JSON, nullable=True) # Full structured explanation
-    credibility_score = Column(Integer, nullable=True, default=None)  # 1-100
-    score_explanation = Column(Text, nullable=True)     # Added to match DB
-    credibility_breakdown = Column(JSON, nullable=True, default=None) # Full 8-dimension breakdown
-    admin_summary = Column(Text, nullable=True)     # Internal neutral justification
+    reporter_details = Column(JSON, nullable=True)
 
-    # Secret Access & Status Tracking (New)
-    secret_key = Column(String(10), nullable=True)      # Visible Secret Key (XXXX-XXXX)
-    secret_key_hash = Column(String, nullable=True)     # Hashed Secret Access Key
-    status = Column(String, default="Received", nullable=False) # Current Status Label
-    
-    # Status Updates (Sync from beacon_update)
-    last_raw_status = Column(Text, nullable=True)       # Raw Admin input
-    last_framed_status = Column(Text, nullable=True)    # LLM-framed public output
-    
-    last_updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
-    
-    # Evidence (Base64 encoded files in JSONB)
-    # Format: [{"file_name": "...", "mime_type": "...", "size_bytes": N, "content_base64": "..."}]
-    evidence_files = Column(JSON, default=list)
-    
-    # Timestamps
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
-
-    # Two-Phase Analysis Tracking
-    analysis_status = Column(String, default="pending", nullable=False) # 'pending' or 'completed'
+    # Filled by background analysis (see ScoringService)
+    ai_summary = Column(Text, nullable=True)
+    ai_explanation = Column(JSON, nullable=True)
+    credibility_score = Column(Integer, nullable=True)  # DB constraint: 1..100, NULL until scored
+    score_explanation = Column(Text, nullable=True)
+    analysis_status = Column(String, default="pending", nullable=False)  # pending | processing | completed | failed
     analysis_attempts = Column(Integer, default=0, nullable=False)
-    analysis_last_error = Column(Text, nullable=True) # Internal debugging only
-    
-    @staticmethod
-    def validate_case_id(case_id: str) -> bool:
-        """
-        Validate case_id format: BCN + 12 digits.
-        """
-        if not case_id:
-            return False
-        pattern = r'^BCN\d{12}$'
-        return bool(re.match(pattern, case_id))
-    
-    @staticmethod
-    def validate_credibility_score(score: int) -> bool:
-        """
-        Validate credibility score is between 1 and 100.
-        """
-        return 1 <= score <= 100
+    analysis_last_error = Column(Text, nullable=True)  # operator diagnostics only, never sent to clients
+
+    # Reporter access. Only a hash of the secret key is kept. ``secret_key`` is a LEGACY plaintext column that
+    # older versions filled in; the maintenance job scrubs it (app.services.maintenance.scrub_plaintext_secret_keys).
+    secret_key = Column(String(10), nullable=True)
+    secret_key_hash = Column(String, nullable=True)
+
+    status = Column(String, default="Received", nullable=False)  # Received/Pending | Ongoing | Completed
+    last_raw_status = Column(Text, nullable=True)  # last admin update, as typed
+    last_framed_status = Column(Text, nullable=True)  # ... and as published
+    # Reporter-visible "last updated": set explicitly when an investigator acts. (No onupdate: background AI
+    # analysis touches the row too, and that must not look like case progress.)
+    last_updated_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+
+    # [{"file_name", "mime_type", "size_bytes", "file_path", + forensic fields after analysis}]
+    evidence_files = Column(JSON, default=list)
+
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)

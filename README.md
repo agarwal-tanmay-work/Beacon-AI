@@ -1,460 +1,165 @@
 <div align="center">
 
-<img src="frontend/public/brand-logo.png" alt="Beacon AI" width="200"/>
+<img src="docs/assets/brand-logo.png" alt="Beacon AI" width="200"/>
 
 # Beacon AI
 
 ### Anonymous Corruption Reporting, Powered by AI
 
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.161-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org)
-[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Gemini](https://img.shields.io/badge/Gemini-3.x_Flash-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/gemini-api/docs/models)
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com)
-[![Gemini](https://img.shields.io/badge/Gemini-2.5_Flash-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://deepmind.google/technologies/gemini)
-[![Render](https://img.shields.io/badge/Deployed_on-Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://render.com)
 
-**Beacon AI** is a full-stack, production-grade platform that lets anyone safely and anonymously report corruption or workplace misconduct — guided by a conversational AI that collects structured evidence, generates a credibility score, and issues a cryptographic Case ID + Secret Key for anonymous case tracking.
+**Beacon AI** lets anyone report corruption or misconduct safely and anonymously. A conversational assistant collects the facts and evidence, the case is scored for credibility in the background, and the reporter receives a Case ID + Secret Key to follow up and message investigators - without ever creating an account.
 
 </div>
 
 ---
 
-## How It Works
+## How it works
 
 ```
- Reporter (Anonymous)           Beacon AI Backend                Admin Portal
- ─────────────────────          ──────────────────────           ─────────────────
- 1. Opens /report               → Session created (UUID)
- 2. Chats with AI               → Gemini 2.5 Flash collects:
-    "Officer took a bribe"         • What happened
-    "At the border post"           • Where & when
-    "Yesterday at 3 PM"            • Who was involved
-    "Officer Raj"                  • Evidence (optional)
-                                   • Contact info (optional)
- 3. Uploads evidence photo      → Stored in Supabase Storage
-                                   AI performs forensic analysis
- 4. Says "I'm done"             → Case ID + Secret Key issued
-                                   Credibility scoring starts ───→ Score + breakdown
-                                                                    visible to admin
- 5. Saves Case ID +             → Returns to /track anytime        Admin posts updates
-    Secret Key                     to check status
+ Reporter (anonymous)               Backend                              Investigators
+ ────────────────────          ───────────────────────────          ─────────────────────
+ 1. chats at /report     ───▶  Gemini guides the interview:
+ 2. attaches photos/audio       what / where / when / who,
+    PDFs, documents             evidence, optional contact
+ 3. says "that's all"    ───▶  Server checks the facts are there,
+                                creates the case, issues
+                                Case ID + Secret Key (shown once)
+ 4. saves the credentials       Background: evidence analysis ─▶ AI summary ─▶ score ──▶ admin portal
+ 5. /track any time      ◀───▶  status, updates, two-way messages ◀────────────────────  posts updates
 ```
 
----
+### Resilience (what happens when Gemini misbehaves)
 
-## Architecture
-
-```mermaid
-graph TB
-    subgraph FE["Public Frontend (Next.js 16 + React 19)"]
-        A["Landing Page<br/>Three.js · Framer Motion · tsParticles"]
-        B["/report — AI Chat Interface"]
-        C["/track — Case Status Lookup"]
-    end
-
-    subgraph BE["Backend API (FastAPI · Python 3.11 · Docker)"]
-        D["POST /public/reports/create"]
-        E["POST /public/reports/message"]
-        F["POST /public/evidence/upload"]
-        G["GET  /public/track"]
-        H["Admin Routes /admin/*"]
-    end
-
-    subgraph AI["AI Layer (Google Gemini 2.5 Flash)"]
-        I["LLM Agent — Conversational Intake"]
-        J["Credibility Scorer<br/>Narrative · Evidence · Behavior"]
-        K["Forensic Analysis<br/>OCR · Vision · Audio"]
-    end
-
-    subgraph DB["Data Layer (Supabase)"]
-        L[("reports")]
-        M[("report_conversations")]
-        N[("report_state_tracking")]
-        O[("beacon — Finalized Cases")]
-        P[("evidence")]
-        Q["Supabase Storage<br/>Files & Media"]
-    end
-
-    subgraph AP["Admin Portal (Next.js)"]
-        R["Dashboard · Cases · Evidence · Updates"]
-    end
-
-    A --> B
-    A --> C
-    B -->|"Axios"| E
-    E --> I
-    I --> M
-    I --> N
-    F --> P
-    F --> Q
-    I -->|"on completion"| O
-    O -.->|"background job"| J
-    J --> K
-    H --> R
-    C --> G
-    G --> O
-```
-
----
-
-## Features
-
-| Feature | Description |
+| Situation | What Beacon does |
 |---|---|
-| **Anonymous by default** | No account required. Reporter identity is never stored or linked across cases. |
-| **Conversational intake** | Gemini AI guides reporters through structured questions in natural prose — never robotic bullet points. |
-| **Multi-format evidence** | Upload images, PDFs, audio files. Each gets forensic AI analysis (OCR, visual scene description). |
-| **Credibility scoring** | Every case receives an AI score (0–100) across Narrative Consistency, Evidence Strength, and Behavioral Reliability. |
-| **Case ID + Secret Key** | Cryptographic pair issued at submission. Both are required together to retrieve case status. Neither alone grants access. |
-| **Admin portal** | Separate Next.js app with JWT auth for investigators to triage, score, and post case updates visible to the reporter. |
-| **Background analysis** | Scoring runs asynchronously — reporter gets instant Case ID while analysis completes in the background. |
-| **Race-condition safe** | Case ID generation retries up to 3 times on UniqueConstraint violations to handle concurrent submissions. |
-| **Degraded mode startup** | If the DB is unreachable at startup, the app still binds its port (Render won't kill the service) and retries on each request. |
+| A model is retired / restricted (e.g. `gemini-2.5-flash`) | Per-model circuit breaker skips it; the next model in the **fallback chain** answers. The API's model list is also consulted, so newly released Flash models are picked up without a code change. |
+| Rate limit / daily quota on one model | Classified from the API's error details; that model rests for the right amount of time, others take over. |
+| Output cut off by thinking tokens, malformed JSON, empty reply | Retried with a bigger budget, then on the next model. |
+| **Every** model is down | The conversation continues in **basic mode** with fixed questions, so a reporter can still finish a report. Analysis of the case is queued and retried automatically later. |
+| API key rejected / leaked | Detected, surfaced on the admin dashboard and in `/health` (`"ai": "key_invalid"`). |
+| A message is refused by safety filters | The user is asked to rephrase; nothing is stored. |
+| The server restarts mid-analysis | A maintenance sweep re-runs stalled analyses with back-off. |
+
+Default chain (`backend/app/services/gemini/registry.py`, override with `GEMINI_MODELS`):
+`gemini-3.8-flash → gemini-3.6-flash → gemini-3.5-flash-lite → gemini-3.1-flash-lite → gemini-flash-latest → gemini-flash-lite-latest → gemini-2.5-flash → gemini-2.5-flash-lite`
 
 ---
 
-## Tech Stack
-
-### Backend (`/backend`)
-
-| Technology | Role |
-|---|---|
-| **FastAPI** | Async Python web framework, REST API, background tasks |
-| **SQLAlchemy (async) + asyncpg** | Async PostgreSQL ORM |
-| **Supabase PostgreSQL** | Primary relational database |
-| **Supabase Storage** | File storage for evidence uploads |
-| **Google Gemini 2.5 Flash** | Chat, evidence analysis, credibility scoring (direct REST via httpx) |
-| **Passlib pbkdf2_sha256** | Secret key hashing |
-| **Python-JOSE** | JWT generation and validation (admin auth) |
-| **Alembic** | Database schema migrations |
-| **Structlog** | Structured JSON logging |
-| **Tesseract OCR + PyMuPDF** | Text extraction from images and PDFs |
-| **OpenCV** | Image preprocessing |
-| **dnspython** | Reliable DNS resolution (bypasses flaky libc resolver on Render) |
-| **Docker (python:3.11-slim-bookworm)** | Containerized deployment |
-
-### Frontend (`/frontend`)
-
-| Technology | Role |
-|---|---|
-| **Next.js 16** | React framework with App Router |
-| **React 19** | Component model |
-| **Tailwind CSS** | Utility-first styling |
-| **Framer Motion** | Page and component animations |
-| **Three.js** | 3D fire sphere background effect |
-| **tsParticles** | Particle sparkle effects |
-| **Axios** | API client with request/response interceptors |
-| **React Markdown + remark-gfm** | Renders AI responses as rich text |
-| **Radix UI** | Accessible headless components |
-
-### Admin Portal (`/admin-portal`)
-
-| Technology | Role |
-|---|---|
-| **Next.js 16** | React framework |
-| **Tailwind CSS** | Styling |
-| **JWT auth** | Protected routes via `AuthGuard` component |
-
----
-
-## Project Structure
+## Repository layout
 
 ```
-Beacon-AI/
-├── backend/                         # FastAPI application
-│   ├── app/
-│   │   ├── api/v1/
-│   │   │   ├── public/
-│   │   │   │   ├── reporting.py     # POST /create, POST /message
-│   │   │   │   ├── evidence.py      # POST /evidence/upload
-│   │   │   │   └── tracking.py      # GET /track
-│   │   │   └── admin/
-│   │   │       ├── auth.py          # POST /admin/auth/login
-│   │   │       ├── reports.py       # GET/PATCH cases
-│   │   │       ├── evidence.py      # Evidence viewer
-│   │   │       └── updates.py       # POST case updates
-│   │   ├── core/
-│   │   │   ├── config.py            # Pydantic settings (reads env vars)
-│   │   │   ├── exceptions.py        # Global exception handlers + traceback logging
-│   │   │   ├── security.py          # JWT + bcrypt
-│   │   │   └── scoring_logic.py     # Credibility scoring criteria
-│   │   ├── db/
-│   │   │   ├── session.py           # Async SQLAlchemy engine (pool_size=5)
-│   │   │   └── init_db.py           # Startup table creation with 10s timeout
-│   │   ├── models/
-│   │   │   ├── report.py            # Report, ReportConversation, StateTracking, Evidence
-│   │   │   └── beacon.py            # Finalized case (beacon table)
-│   │   ├── services/
-│   │   │   ├── report_engine.py     # Core message processing orchestrator
-│   │   │   ├── llm_agent.py         # Gemini conversation handler + state extraction
-│   │   │   ├── ai_service.py        # Gemini REST API wrapper (httpx)
-│   │   │   ├── scoring_service.py   # Background credibility analysis
-│   │   │   ├── storage_service.py   # Supabase Storage upload/download
-│   │   │   └── evidence_processor.py # OCR, image analysis pipeline
-│   │   └── main.py                  # FastAPI app, CORS, lifespan, route mounts
-│   ├── Dockerfile                   # python:3.11-slim-bookworm, PORT env var support
-│   ├── requirements.txt
-│   └── run_server.py                # Local dev entry point (reads PORT env var)
-│
-├── frontend/                        # Reporter-facing Next.js app
-│   └── src/
-│       ├── app/
-│       │   ├── page.tsx             # Landing page (Fire Sphere + Sparkles + FAQ)
-│       │   ├── report/page.tsx      # AI chat reporting interface
-│       │   └── track/page.tsx       # Case status lookup
-│       └── components/
-│           ├── features/
-│           │   ├── ChatInterface.tsx # Core chat UI with message bubbles
-│           │   └── Hero.tsx
-│           └── ui/                  # fire-sphere, sparkles, anime-navbar, etc.
-│
-└── admin-portal/                    # Investigator-facing Next.js app
-    └── src/app/
-        ├── login/                   # JWT login
-        ├── pending/                 # Unreviewed cases
-        ├── ongoing/                 # Active investigations
-        ├── completed/               # Closed cases
-        ├── evidence/                # Evidence browser
-        └── case/[id]/               # Case detail + update poster
+backend/            FastAPI service (Python 3.12)
+  app/api/          HTTP routes: public (reporter) and admin
+  app/core/         settings, security primitives, logging, rate limiting, middleware
+  app/db/           async engine, schema upgrades
+  app/models/       SQLAlchemy models
+  app/schemas/      request/response + LLM schemas
+  app/services/     gemini/ (client, fallback chain), chat_agent, report_engine, evidence_processor,
+                    scoring_service, maintenance, storage_service ...
+  tests/            pytest suite (fake Gemini at the HTTP level)
+frontend/           Reporter-facing Next.js app (chat, tracking)
+admin-portal/       Investigator Next.js app
+docs/assets/        Images used by this README
+.github/workflows/  CI + Render keep-alive
 ```
 
 ---
 
-## Getting Started
+## Getting started (local)
 
-### Prerequisites
-
-- Python 3.11+
-- Node.js 20+
-- A [Supabase](https://supabase.com) project (free tier works)
-- A [Google AI Studio](https://aistudio.google.com) Gemini API key
-
-### 1. Clone
+Requirements: Python 3.12, Node 22, a Gemini API key. A Supabase project is **optional** locally (SQLite + a local folder are used instead).
 
 ```bash
-git clone https://github.com/agarwal-tanmay-work/Beacon-AI.git
-cd Beacon-AI
-```
-
-### 2. Backend
-
-```bash
+# Backend
 cd backend
+python -m venv .venv && source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
+cp .env.example backend_config.env                          # then edit it
+#   minimum for local use:
+#     SECRET_KEY=<64 random hex chars>   DATABASE_URL=sqlite+aiosqlite:///./dev.db
+#     GEMINI_API_KEY=...  ENVIRONMENT=development  ADMIN_PASSWORD=<something for local use>
+uvicorn app.main:app --reload --port 8000                   # docs: http://localhost:8000/api/v1/docs
 
-python -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+# Reporter site
+cd frontend && npm install && echo 'BACKEND_URL=http://localhost:8000' > .env.local && npm run dev      # :3000
 
-cp backend_config.env.example backend_config.env
-# Edit backend_config.env with your credentials (see table below)
-
-python run_server.py
-# API docs: http://localhost:8000/api/v1/docs
+# Admin portal
+cd admin-portal && npm install && echo 'NEXT_PUBLIC_API_URL=http://localhost:8000' > .env.local && npm run dev   # :3001
 ```
 
-### 3. Frontend
-
-```bash
-cd frontend
-npm install
-echo 'BACKEND_URL=http://localhost:8000' > .env.local
-npm run dev
-# http://localhost:3000
-```
-
-### 4. Admin Portal
-
-```bash
-cd admin-portal
-npm install
-echo 'NEXT_PUBLIC_API_URL=http://localhost:8000' > .env.local
-npm run dev
-# http://localhost:3001
-```
+Tests and checks: `cd backend && pytest && ruff check app tests`; `cd frontend && npm run lint && npm run build` (same for `admin-portal`).
 
 ---
 
-## Environment Variables
+## Configuration (backend)
 
-### Backend (`backend/backend_config.env`)
-
-| Variable | Required | Description |
+| Variable | Required | Notes |
 |---|---|---|
-| `SECRET_KEY` | Yes | Random 64-char string for JWT signing |
-| `DATABASE_URL` | Yes | `postgresql+asyncpg://user:pass@host:5432/db` |
-| `SUPABASE_URL` | Yes | `https://your-project.supabase.co` |
-| `SUPABASE_KEY` | Yes | Supabase anon key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Supabase service role key (file storage) |
-| `GEMINI_API_KEY` | Yes | Google Gemini API key |
-| `CORS_ORIGINS` | Yes | `["https://your-frontend.com"]` |
-| `ENVIRONMENT` | No | `development` or `production` (default: `production`) |
-| `ADMIN_PASSWORD_HASH` | No | bcrypt hash of admin password |
+| `SECRET_KEY` | yes | ≥ 32 random chars. Signs admin JWTs and file links. |
+| `DATABASE_URL` | yes | Supabase *session pooler* string (IPv4). `postgres://` / `postgresql://` are converted automatically. |
+| `GEMINI_API_KEY` | yes\* | \*Without it the assistant runs in basic mode and cases are not scored. |
+| `ADMIN_PASSWORD_HASH` **or** `ADMIN_PASSWORD` | for the admin portal | **No default password exists.** Without one, admin login is disabled. Generate a hash: `python -m app.tools.hash_password`. bcrypt hashes from the old README keep working. |
+| `ADMIN_USERNAME` | no | default `beaconai` (`admin` is accepted as an alias) |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | production | Evidence storage. Accepts the new `sb_secret_…` keys and legacy service-role keys. Without them files go to local disk, which Render wipes on every deploy. |
+| `CORS_ORIGINS` | for the admin portal | The admin portal's URL. The reporter site uses a same-origin proxy and needs no CORS. |
+| `GEMINI_MODELS`, `GEMINI_FAST_MODELS`, `GEMINI_AUTO_DISCOVER` | no | Override / extend the fallback chains. |
+| `ENVIRONMENT` | no | `production` (default) hides `/api/v1/docs`. |
 
-### Frontend / Admin Portal (`.env.local` — local dev only)
-
-| Variable | Description |
-|---|---|
-| `BACKEND_URL` | Backend base URL for local dev, e.g. `http://localhost:8000` |
-
-> `NEXT_PUBLIC_API_URL` is no longer needed. The Next.js rewrite proxy reads the server-side `BACKEND_URL` variable and forwards `/api/v1/*` requests automatically. This also means the backend URL is never exposed in the browser bundle.
-
----
+`GROQ_API_KEY`, `SUPABASE_KEY` and other legacy variables are ignored if still set.
 
 ## Deployment
 
-### Backend on Render
+**Backend (Render, Docker)** - root directory `backend/`, health check path `/health`. Set the variables above.
+**Reporter site (Vercel)** - project root `frontend/`, set `BACKEND_URL=https://<your-render-service>`.
+**Admin portal (Vercel)** - project root `admin-portal/`, set `NEXT_PUBLIC_API_URL=https://<your-render-service>`, and add its URL to `CORS_ORIGINS` on the backend.
+**Supabase** - make the `evidence` bucket **private** (the backend creates it as private if missing). Files are only ever served through short-lived signed links from `GET /api/v1/files`.
 
-The backend ships with a `Dockerfile` — Render detects it automatically.
-
-1. Create a **Web Service** on Render, point the root directory to `backend/`
-2. Set **Environment** to **Docker**
-3. Set **Health Check Path** to `/health`
-4. Add all environment variables from the Backend table above
-
-> **Security:** If your `GEMINI_API_KEY` was ever committed to a public repository, **revoke it immediately** in [Google AI Studio](https://aistudio.google.com/app/apikey) and generate a new one. Store it only in Render's environment variables — never in source files.
-
-#### Render Free Plan — Cold Start
-
-Render free-tier services sleep after 15 minutes of inactivity and take ~30–60 seconds to wake up. To minimize disruption:
-
-- **UptimeRobot** (free): Ping your backend's `/health` endpoint every 5 minutes to keep it warm
-- The frontend already shows `"Server is starting up..."` after 8 seconds of waiting so users know what's happening
-- The Axios timeout is set to 150 seconds — more than enough for a cold start
-
-### Frontend on Vercel
-
-The frontend proxies all API calls through Next.js rewrites, so **no CORS configuration is needed on the backend**.
-
-**Required Vercel environment variable:**
-
-| Variable | Value |
-|---|---|
-| `BACKEND_URL` | Your Render backend URL, e.g. `https://beacon-backend.onrender.com` |
-
-That's it. Do **not** set `NEXT_PUBLIC_API_URL` on Vercel — it's not needed with the proxy setup.
-
-### Supabase Pooler
-
-If connecting via Supabase's Transaction Pooler (port `6543`), `session.py` automatically disables prepared statements when it detects `:6543` or `pooler.supabase.com` in the URL.
+Upgrading an existing deployment is automatic: on start-up the schema is brought up to date (additive only) and legacy plaintext secret keys are hashed and scrubbed.
 
 ---
 
-## API Reference
-
-### Create Session
-
-```
-POST /api/v1/public/reports/create
-Content-Type: application/json
-{}
-```
-
-```json
-{
-  "report_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "access_token": "tk_a1b2c3d4e5f6",
-  "message": "Secure session established. Speak freely, I am listening."
-}
-```
-
-### Send Message
-
-```
-POST /api/v1/public/reports/message
-Content-Type: application/json
-
-{
-  "report_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "access_token": "tk_a1b2c3d4e5f6",
-  "content": "An officer demanded payment at the checkpoint."
-}
-```
-
-```json
-{
-  "report_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "sender": "SYSTEM",
-  "content": "I understand how difficult that must have been. Can you tell me where exactly this happened?",
-  "timestamp": "2026-01-01T12:00:00Z",
-  "next_step": "ACTIVE",
-  "case_id": null,
-  "secret_key": null
-}
-```
-
-When the conversation is complete:
-
-```json
-{
-  "next_step": "COMPLETED",
-  "case_id": "BCN-20260101-001",
-  "secret_key": "SK-XXXX-XXXX-XXXX"
-}
-```
-
-### Track Case
-
-```
-GET /api/v1/public/track?case_id=BCN-20260101-001&secret_key=SK-XXXX-XXXX-XXXX
-```
-
----
-
-## Credibility Scoring
-
-Each finalized case is automatically scored (0–100) after submission:
-
-```
-Score = Narrative Consistency (0–40) + Evidence Strength (0–40) + Behavioral Reliability (0–20)
-```
-
-| Score | Confidence | Meaning |
-|---|---|---|
-| 0–33 | Low | Vague report, lacks specific details or evidence |
-| 34–66 | Medium | Credible with partial corroboration |
-| 67–100 | High | Detailed narrative with strong supporting evidence |
-
-**Scoring rules:**
-- No evidence submitted → Evidence Strength = 0 automatically
-- Unrelated evidence (e.g., random photo for a bribery report) → 0 points
-- Reports with only generic details cap at 15/40 for narrative consistency
-- The system defaults to skepticism — scores above 60 must be earned
-
----
-
-## Security Model
+## Security model
 
 | Concern | Implementation |
 |---|---|
-| Reporter identity | Never stored; no account required |
-| Access tokens | SHA-256 hashed before storage; plaintext never persisted |
-| Secret keys | pbkdf2_sha256 hashed; shown once and never stored in plaintext |
-| Case access | Requires *both* Case ID and Secret Key; neither alone grants access |
-| Admin access | JWT with configurable expiry; password stored as bcrypt hash |
-| Database connections | SSL enforced on all connections; `CERT_NONE` mode avoids CA chain issues |
-| CORS | Configured to allow only known frontend origins |
-| API keys | Must only be stored in Render environment variables, never in source code |
+| Reporter anonymity | No accounts. Photos are re-encoded to drop EXIF/GPS/device data before storage. |
+| Reporting sessions | 256-bit access token, only its SHA-256 is stored, verified on every message and upload. |
+| Case access | Case ID **and** Secret Key. Keys are 80-bit, stored only as PBKDF2 hashes, shown once; per-IP and per-case lock-outs; identical error and timing for unknown IDs. A lost response can be recovered until the reporter confirms they saved the key (max 24 h). |
+| Submission | Decided by the server from validated facts, never by model output. Prompt-injection cannot create cases or credentials. |
+| Admin | JWT (1 h), constant-time password check, lock-out after 6 failures, fail-closed when unconfigured. |
+| Evidence files | Private bucket, type decided from file bytes against an allowlist, size/count caps, names never reach storage paths, served with `nosniff` + restrictive CSP. |
+| Abuse | Per-IP and global rate limits, request-body size limit enforced while streaming. |
+| Logging | Secrets are redacted; message bodies and evidence text are never logged. |
+
+### Privacy note on Gemini
+Google's pricing page states that **free-tier** API traffic may be used to improve Google's products; paid-tier traffic is not. For a service handling whistleblower reports, use a **paid-tier** key in production.
+
+### If keys were ever committed
+The git history of this repository contained API credentials. Rotating them is required even though they are no longer in the current tree: **Gemini** (create a new key in AI Studio, delete the old), **Supabase** (create a new secret key, then deactivate the legacy `service_role`/`anon` keys under *Settings → API Keys*), the **database password**, `SECRET_KEY`, and the admin password.
 
 ---
 
-## Contributing
+## API (summary)
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feat/your-feature`
-3. Commit: `git commit -m "feat: describe your change"`
-4. Open a pull request
+Public: `POST /api/v1/public/reports/create` · `/message` · `/credentials` · `/credentials/ack` · `POST /public/evidence/upload` · `POST /public/track` · `/track/message` · `/track/upload`
+Admin (Bearer JWT): `POST /admin/auth/login` · `GET /admin/reports/` · `GET|PUT /admin/reports/{id}[/status]` · `GET|POST /admin/reports/{id}/messages|message|upload|update|analyze` · `GET /admin/system/status`
+Files: `GET /api/v1/files?ref=…&exp=…&sig=…` (signed). Health: `GET /health`.
 
-Security bug reports are especially welcome.
+Errors are `{"detail": "...", "code": "..."}` (`ai_unavailable`, `rate_limited`, `invalid_session`, `file_too_large`, …).
+
+## Credibility score
+
+`narrative (0-40) + evidence (0-40) + behaviour (0-20)`, computed by the server from the model's three judgements: **Low** 0-33, **Medium** 34-66, **High** 67-100. No usable evidence ⇒ evidence points are exactly 0. The score prioritises cases for human review; it is not a verdict.
 
 ---
 
 <div align="center">
 
-Built to give every person a safe, private, and credible way to speak up.
-
-**Secure · Anonymous · Verified**
-
-*© 2026 Beacon AI*
+*Secure · Anonymous · Verified* — © 2026 Beacon AI
 
 </div>
