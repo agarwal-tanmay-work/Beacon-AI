@@ -37,7 +37,7 @@
 
 | Situation | What Beacon does |
 |---|---|
-| A model is retired / restricted (e.g. `gemini-2.5-flash`) | Per-model circuit breaker skips it; the next model in the **fallback chain** answers. The API's model list is also consulted, so newly released Flash models are picked up without a code change. |
+| A model is retired / restricted (e.g. the old `gemini-2.5-flash`) | Per-model circuit breaker skips it; the next model in the **fallback chain** answers. |
 | Rate limit / daily quota on one model | Classified from the API's error details; that model rests for the right amount of time, others take over. |
 | Output cut off by thinking tokens, malformed JSON, empty reply | Retried with a bigger budget, then on the next model. |
 | **Every** model is down | The conversation continues in **basic mode** with fixed questions, so a reporter can still finish a report. Analysis of the case is queued and retried automatically later. |
@@ -45,8 +45,10 @@
 | A message is refused by safety filters | The user is asked to rephrase; nothing is stored. |
 | The server restarts mid-analysis | A maintenance sweep re-runs stalled analyses with back-off. |
 
-Default chain (`backend/app/services/gemini/registry.py`, override with `GEMINI_MODELS`):
-`gemini-3.8-flash → gemini-3.6-flash → gemini-3.5-flash-lite → gemini-3.1-flash-lite → gemini-flash-latest → gemini-flash-lite-latest → gemini-2.5-flash → gemini-2.5-flash-lite`
+Default chains (`backend/app/services/gemini/registry.py`, override with `GEMINI_MODELS` / `GEMINI_FAST_MODELS`), tried in this order:
+
+- **Smart** (chat, summary, scoring): `gemini-3.8-flash → gemini-3.5-flash → gemini-flash-latest → gemini-3.5-flash-lite → gemini-3.1-flash-lite → gemini-flash-lite-latest`
+- **Fast** (vision, transcription, rewrites): `gemini-3.5-flash-lite → gemini-flash-lite-latest → gemini-3.1-flash-lite → gemini-3.5-flash → gemini-flash-latest`
 
 ---
 

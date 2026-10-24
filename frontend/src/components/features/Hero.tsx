@@ -1,30 +1,10 @@
 "use client";
 
-import React, { useMemo, useState, useEffect } from "react";
 import Link from "next/link";
 import { InteractiveHoverButton } from "@/components/ui/interactive-hover-button";
-import VaporizeTextCycle, { Tag } from "@/components/ui/vapour-text-effect";
 import { SparklesCore } from "@/components/ui/sparkles";
 
 export function Hero() {
-    const [fontSize, setFontSize] = useState("60px");
-
-    useEffect(() => {
-        const handleResize = () => {
-            if (window.innerWidth >= 768) {
-                setFontSize("140px");
-            } else {
-                setFontSize("60px");
-            }
-        };
-
-        // Initial check
-        handleResize();
-
-        window.addEventListener("resize", handleResize);
-        return () => window.removeEventListener("resize", handleResize);
-    }, []);
-
     return (
         <section className="relative h-screen w-full flex flex-col items-center bg-black overflow-hidden">
 
@@ -33,26 +13,9 @@ export function Hero() {
           translate-y-28: Pushing text down significantly to sit just above the horizon line.
       */}
             <div className="relative h-[45vh] md:h-[50vh] w-full flex flex-col items-center justify-end overflow-hidden z-30 pb-0 translate-y-16 md:translate-y-28">
-                <VaporizeTextCycle
-                    texts={useMemo(() => ["Beacon AI"], [])}
-                    font={useMemo(() => ({
-                        fontFamily: "Inter, sans-serif",
-                        fontSize: fontSize,
-                        fontWeight: 800,
-                    }), [fontSize])}
-                    color="rgba(255, 255, 255, 1)"
-                    spread={5}
-                    density={5}
-                    animation={useMemo(() => ({
-                        vaporizeDuration: 3,
-                        fadeInDuration: 1,
-                        waitDuration: 0.5,
-                    }), [])}
-                    direction="left-to-right"
-                    alignment="center"
-                    tag={Tag.H1}
-                    mode="continuous"
-                />
+                <h1 className="font-sans text-[60px] md:text-[140px] font-extrabold leading-none tracking-tight text-white">
+                    Beacon AI
+                </h1>
             </div>
 
             {/* 2️⃣ Horizon + Sparkles + Content Stack */}

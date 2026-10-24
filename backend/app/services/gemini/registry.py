@@ -4,8 +4,8 @@ Model names are the part of this system that rots fastest (Google retires or res
 few months), so nothing here is a single point of failure:
 
 * the preference chains below are just defaults - override with ``GEMINI_MODELS`` / ``GEMINI_FAST_MODELS``;
-* when ``GEMINI_AUTO_DISCOVER`` is on, the API's own model list is used to demote models that do not
-  exist and to pick up newer Flash models that this file has never heard of;
+* when ``GEMINI_AUTO_DISCOVER`` is on, the API's own model list is used for diagnostics and to learn
+  which models support thinking - it never reorders the configured chain;
 * every model has a circuit breaker, so a retired / quota-exhausted / overloaded model is skipped
   for a while instead of costing every request a failed round trip.
 """
@@ -18,31 +18,23 @@ from typing import Any
 
 from app.services.gemini.errors import GeminiError
 
-# Order = preference. Verified against https://ai.google.dev/gemini-api/docs/models (2026-10-22).
+# Order = preference, used exactly as listed (override with GEMINI_MODELS / GEMINI_FAST_MODELS).
 QUALITY_CHAIN: tuple[str, ...] = (
     "gemini-3.8-flash",
-    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-latest",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
-    "gemini-flash-latest",
     "gemini-flash-lite-latest",
-    # Not deprecated, but Google now only serves them to projects that already used them.
-    # Last resort; the breaker removes them for hours after the first 404/403.
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
 )
 FAST_CHAIN: tuple[str, ...] = (
     "gemini-3.5-flash-lite",
-    "gemini-3.8-flash",
-    "gemini-3.6-flash",
-    "gemini-3.1-flash-lite",
     "gemini-flash-lite-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
     "gemini-flash-latest",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
 )
 
-_GA_FLASH = re.compile(r"^gemini-(\d+)(?:\.(\d+))?-flash(-lite)?$")
 _VERSION = re.compile(r"^gemini-(\d+)(?:\.(\d+))?-")
 
 
@@ -183,13 +175,7 @@ class ModelRegistry:
 
     def chain(self, profile: str) -> list[str]:
         """Full ordered preference list for a profile (breaker state NOT applied)."""
-        configured = list(self.configured(profile))
-        if self._discovered is None:
-            return configured
-        listed = [m for m in configured if m in self._discovered]
-        unlisted = [m for m in configured if m not in self._discovered]
-        extras = self._discovered_extras(set(configured), prefer_lite=(profile == "fast"))
-        return listed + extras + unlisted
+        return list(self.configured(profile))
 
     def candidates(self, profile: str) -> list[str]:
         """Models worth trying right now, best first."""
@@ -227,11 +213,6 @@ class ModelRegistry:
 
     def needs_discovery(self, max_age_seconds: float = 6 * 3600) -> bool:
         return self._discovered_at is None or self.clock() - self._discovered_at > max_age_seconds
-
-    def _discovered_extras(self, known: set[str], *, prefer_lite: bool) -> list[str]:
-        extras = [m for m in (self._discovered or {}) if m not in known and _GA_FLASH.match(m)]
-        # newest version first; within a version Flash before Flash-Lite (reversed for the fast profile)
-        return sorted(extras, key=lambda m: (version_of(m), m.endswith("-lite") == prefer_lite), reverse=True)
 
     # ---- diagnostics ----------------------------------------------------------------
     def snapshot(self, profile: str = "quality") -> list[dict[str, Any]]:

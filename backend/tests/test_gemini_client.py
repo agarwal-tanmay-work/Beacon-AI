@@ -420,19 +420,34 @@ async def test_concurrent_requests_share_a_single_probe_of_a_recovering_model():
 # ======================================================================================
 # Discovery + registry
 # ======================================================================================
-def test_discovery_adds_new_flash_models_and_demotes_unlisted_ones():
-    registry = ModelRegistry(quality=("gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash"))
+def test_discovery_never_reorders_the_configured_chain():
+    registry = ModelRegistry(quality=("gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"))
     registry.apply_discovery(
         [
             {"name": "models/gemini-3.9-flash", "supportedGenerationMethods": ["generateContent"]},
-            {"name": "models/gemini-3.8-flash", "supportedGenerationMethods": ["generateContent"], "thinking": True},
-            {"name": "models/gemini-3.9-flash-tts", "supportedGenerationMethods": ["generateContent"]},
-            {"name": "models/gemini-embedding-2", "supportedGenerationMethods": ["embedContent"]},
-            {"name": "models/gemini-3.1-pro-preview", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/gemini-3.5-flash", "supportedGenerationMethods": ["generateContent"]},
         ]
     )
-    # listed configured first, then newly discovered GA flash models, then configured-but-unlisted last
-    assert registry.chain("quality") == ["gemini-3.8-flash", "gemini-3.9-flash", "gemini-3.6-flash", "gemini-2.5-flash"]
+    assert registry.chain("quality") == ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
+
+
+def test_default_chains_follow_the_requested_order():
+    registry = ModelRegistry()
+    assert registry.chain("quality") == [
+        "gemini-3.8-flash",
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-lite-latest",
+    ]
+    assert registry.chain("fast") == [
+        "gemini-3.5-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
+    ]
 
 
 def test_discovery_ignores_empty_listing():
